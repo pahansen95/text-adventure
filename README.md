@@ -2,7 +2,7 @@
 
 A text driven adventure game that affords players the use of Natural Language as the "controller".
 
-## Design & Theory
+## Engine Design & Theory
 
 The player(s) interact with the `World` through natural language. An LLM maps player intent into the functional procedures provided by the `World Interface`. The game state is maintained through the `World State`.
 
