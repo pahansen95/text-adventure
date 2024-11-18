@@ -41,11 +41,23 @@ def mapping_benchmark(o: Mapping) -> int:
   elapsed = time.perf_counter_ns() - datum
   return elapsed
 
-def run_benchmarks(factory: Callable, benchmark: Callable, count: int) -> list[tuple[int, int]]:
+def factory_kwarg_benchmark(cls: type[T], name: str, age: int) -> tuple[T, int]:
+  datum = time.perf_counter_ns()
+  o = cls(name=name, age=age)
+  elapsed = time.perf_counter_ns() - datum
+  return o, elapsed
+
+def factory_arg_benchmark(cls: type[T], name: str, age: int) -> tuple[T, int]:
+  datum = time.perf_counter_ns()
+  o = cls(name, age)
+  elapsed = time.perf_counter_ns() - datum
+  return o, elapsed
+
+def run_benchmarks(factory: Callable, access: Callable, count: int) -> list[tuple[int, int]]:
   times: list[tuple[int, int]] = []
   for i in tqdm(range(count)):
     o, t1 = factory("Name", i)
-    t2 = benchmark(o)
+    t2 = access(o)
     times.append((t1, t2))
   return times
 

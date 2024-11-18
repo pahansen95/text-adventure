@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from collections import OrderedDict
 import array, ctypes, weakref, mmap, operator, time, struct
 
-from . import BenchmarkRegistry, attrib_benchmark, mapping_benchmark
+from . import BenchmarkRegistry, attrib_benchmark, mapping_benchmark, factory_kwarg_benchmark, factory_arg_benchmark
 
 @BenchmarkRegistry.register
 class PersonClass:
@@ -17,10 +17,7 @@ class PersonClass:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonClass, int]:
-    datum = time.perf_counter_ns()
-    o = PersonClass(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonClass) -> int: return attrib_benchmark(o)
@@ -34,10 +31,7 @@ class PersonSlotsClass:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonSlotsClass, int]:
-    datum = time.perf_counter_ns()
-    o = PersonSlotsClass(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonSlotsClass) -> int: return attrib_benchmark(o)
@@ -50,10 +44,7 @@ class PersonDataclass:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonDataclass, int]:
-    datum = time.perf_counter_ns()
-    o = PersonDataclass(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return (o, elapsed)
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonDataclass) -> int: return attrib_benchmark(o)
@@ -66,10 +57,7 @@ class PersonFrozenDataclass:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonFrozenDataclass, int]:
-    datum = time.perf_counter_ns()
-    o = PersonFrozenDataclass(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return (o, elapsed)
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonFrozenDataclass) -> int: return attrib_benchmark(o)
@@ -82,10 +70,7 @@ class PersonSlotsDataclass:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonSlotsDataclass, int]:
-    datum = time.perf_counter_ns()
-    o = PersonSlotsDataclass(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return (o, elapsed)
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonSlotsDataclass) -> int: return attrib_benchmark(o)
@@ -98,10 +83,7 @@ class PersonFrozenSlotsDataclass:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonFrozenSlotsDataclass, int]:
-    datum = time.perf_counter_ns()
-    o = PersonFrozenSlotsDataclass(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return (o, elapsed)
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonFrozenSlotsDataclass) -> int: return attrib_benchmark(o)
@@ -113,10 +95,7 @@ class PersonNamedTuple(NamedTuple):
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonNamedTuple, int]:
-    datum = time.perf_counter_ns()
-    o = PersonNamedTuple(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonNamedTuple) -> int: return attrib_benchmark(o)
@@ -128,6 +107,7 @@ class PersonTypedDict(TypedDict):
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonTypedDict, int]:
+    # NOTE: We need to override this since TypedDicts are for static typing
     datum = time.perf_counter_ns()
     o = {
       'name': name,
@@ -144,6 +124,7 @@ class PersonSubclassDict(dict):
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonSubclassDict, int]:
+    # L
     datum = time.perf_counter_ns()
     o = PersonSubclassDict({
       'name': name,
@@ -163,10 +144,7 @@ class PersonAttrs:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonAttrs, int]:
-    datum = time.perf_counter_ns()
-    o = PersonAttrs(name=name, age=age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonAttrs) -> int: return attrib_benchmark(o)
@@ -179,10 +157,7 @@ class PersonAttrsSlots:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonAttrsSlots, int]:
-    datum = time.perf_counter_ns()
-    o = PersonAttrsSlots(name=name, age=age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonAttrsSlots) -> int: return attrib_benchmark(o)
@@ -195,10 +170,7 @@ class PersonAttrsFrozen:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonAttrsFrozen, int]:
-    datum = time.perf_counter_ns()
-    o = PersonAttrsFrozen(name=name, age=age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonAttrsFrozen) -> int: return attrib_benchmark(o)
@@ -211,10 +183,7 @@ class PersonAttrsFrozenSlots:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonAttrsFrozenSlots, int]:
-    datum = time.perf_counter_ns()
-    o = PersonAttrsFrozen(name=name, age=age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonAttrsFrozenSlots) -> int: return attrib_benchmark(o)
@@ -235,10 +204,7 @@ class PersonWithProperties:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonWithProperties, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name=name, age=age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonWithProperties) -> int: return attrib_benchmark(o)
@@ -259,10 +225,7 @@ class PersonWithCachedProperties:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonWithCachedProperties, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name=name, age=age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonWithCachedProperties) -> int: return attrib_benchmark(o)
@@ -271,10 +234,7 @@ class PersonWithCachedProperties:
 class PersonSimpleNamespace:
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[SimpleNamespace, int]:
-    datum = time.perf_counter_ns()
-    o = SimpleNamespace(name=name, age=age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
     
   @staticmethod
   def benchmark(o: SimpleNamespace) -> int: return attrib_benchmark(o)
@@ -308,10 +268,7 @@ class PersonOrderedDict:
 
 #   @classmethod
 #   def factory(cls, name: str, age: int) -> tuple[PersonWeakRef, int]:
-#     datum = time.perf_counter_ns()
-#     o = cls(name, age)
-#     elapsed = time.perf_counter_ns() - datum
-#     return o, elapsed
+    # return factory_kwarg_benchmark(cls, name, age)
   
 #   @staticmethod
 #   def benchmark(o: PersonWeakRef) -> int: return attrib_benchmark(o)
@@ -340,10 +297,7 @@ class PersonCTypes:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonCTypes, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonCTypes) -> int: return attrib_benchmark(o)
@@ -365,10 +319,7 @@ class PersonArray:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonArray, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonArray) -> int: return attrib_benchmark(o)
@@ -402,10 +353,7 @@ class PersonArray:
 
 #   @classmethod
 #   def factory(cls, name: str, age: int) -> tuple[PersonMemoryMapped, int]:
-#     datum = time.perf_counter_ns()
-#     o = cls(name, age)
-#     elapsed = time.perf_counter_ns() - datum
-#     return o, elapsed
+#     return factory_kwarg_benchmark(cls, name, age)
   
 #   @staticmethod
 #   def benchmark(o: PersonMemoryMapped) -> int: return attrib_benchmark(o)
@@ -437,10 +385,7 @@ class PersonDescriptor:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonDescriptor, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonDescriptor) -> int: return attrib_benchmark(o)
@@ -459,10 +404,7 @@ class PersonOperatorSlots:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonOperatorSlots, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonOperatorSlots) -> int: 
@@ -508,10 +450,7 @@ class PersonStruct:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonStruct, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonStruct) -> int: return attrib_benchmark(o)
@@ -553,10 +492,7 @@ class PersonStructFixed:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonStructFixed, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonStructFixed) -> int: return attrib_benchmark(o)
@@ -600,10 +536,7 @@ class PersonStructArray:
 
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[PersonStructArray, int]:
-    datum = time.perf_counter_ns()
-    o = cls(name, age)
-    elapsed = time.perf_counter_ns() - datum
-    return o, elapsed
+    return factory_kwarg_benchmark(cls, name, age)
   
   @staticmethod
   def benchmark(o: PersonStructArray) -> int: return attrib_benchmark(o)
