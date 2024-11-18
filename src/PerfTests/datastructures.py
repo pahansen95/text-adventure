@@ -234,7 +234,7 @@ class PersonWithCachedProperties:
 class PersonSimpleNamespace:
   @classmethod
   def factory(cls, name: str, age: int) -> tuple[SimpleNamespace, int]:
-    return factory_kwarg_benchmark(cls, name, age)
+    return factory_kwarg_benchmark(SimpleNamespace, name, age)
     
   @staticmethod
   def benchmark(o: SimpleNamespace) -> int: return attrib_benchmark(o)
