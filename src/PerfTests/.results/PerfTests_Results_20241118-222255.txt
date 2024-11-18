@@ -1,0 +1,119 @@
+### Python Datastructures Performance Tests ###
+
+Run Time: Mon Nov 18 22:22:55 2024
+Iterations: 25,000,000
+
+### CREATION Time Performance ###
+
+Type                        Mean          Median        StdDev        Min           Max           Ops/sec        
+-----------------------------------------------------------------------------------------------------------------
+PersonClass                 751.96 ns     711.00 ns     1.09 µs       651.00 ns     4.64 ms       1,329,860      
+PersonSlotsClass            735.62 ns     691.00 ns     1.10 µs       631.00 ns     3.87 ms       1,359,403      
+PersonDataclass             889.45 ns     752.00 ns     456.34 µs     651.00 ns     2.28 s        1,124,284      
+PersonFrozenDataclass       1.45 µs       1.32 µs       405.79 µs     1.18 µs       2.03 s        689,267        
+PersonSlotsDataclass        755.96 ns     712.00 ns     5.64 µs       631.00 ns     26.67 ms      1,322,813      
+PersonFrozenSlotsDataclass  1.70 µs       1.28 µs       1.89 ms       1.14 µs       9.46 s        586,711        
+PersonNamedTuple            1.09 µs       972.00 ns     416.41 µs     881.00 ns     2.08 s        914,712        
+PersonTypedDict             206.55 ns     201.00 ns     1.12 µs       180.00 ns     4.48 ms       4,841,343      
+PersonSubclassDict          517.16 ns     511.00 ns     940.33 ns     450.00 ns     3.31 ms       1,933,638      
+PersonAttrs                 911.59 ns     722.00 ns     516.71 µs     651.00 ns     2.11 s        1,096,987      
+PersonAttrsSlots            1.14 µs       722.00 ns     1.90 ms       651.00 ns     9.48 s        875,152        
+PersonAttrsFrozen           1.19 µs       1.15 µs       2.32 µs       1.04 µs       4.30 ms       840,564        
+PersonAttrsFrozenSlots      1.63 µs       1.14 µs       1.90 ms       1.03 µs       9.27 s        611,676        
+PersonWithProperties        869.39 ns     751.00 ns     421.89 µs     651.00 ns     2.11 s        1,150,226      
+PersonWithCachedProperties  839.03 ns     781.00 ns     1.61 µs       681.00 ns     4.29 ms       1,191,857      
+PersonSimpleNamespace       820.32 ns     430.00 ns     1.95 ms       380.00 ns     9.74 s        1,219,038      
+PersonOrderedDict           1.19 µs       1.14 µs       2.35 µs       1.01 µs       4.10 ms       841,299        
+PersonCTypes                1.66 µs       1.24 µs       1.91 ms       1.11 µs       9.54 s        603,272        
+PersonArray                 1.65 µs       1.50 µs       415.90 µs     1.36 µs       2.08 s        606,263        
+PersonDescriptor            1.93 µs       1.38 µs       2.07 ms       1.23 µs       10.00 s       517,754        
+PersonOperatorSlots         1.80 µs       1.25 µs       2.03 ms       1.14 µs       9.83 s        556,696        
+PersonStruct                2.05 µs       1.54 µs       1.92 ms       1.37 µs       9.40 s        488,945        
+PersonStructFixed           1.25 µs       1.19 µs       2.24 µs       1.10 µs       4.59 ms       800,114        
+PersonStructArray           1.75 µs       1.68 µs       6.92 µs       1.53 µs       33.14 ms      572,147        
+
+### CREATION Relative Performance (lower is better) ###
+
+           PersonTypedDict:       206.55 ns (  1.00x)
+        PersonSubclassDict:       517.16 ns (  2.50x)
+          PersonSlotsClass:       735.62 ns (  3.56x)
+               PersonClass:       751.96 ns (  3.64x)
+      PersonSlotsDataclass:       755.96 ns (  3.66x)
+     PersonSimpleNamespace:       820.32 ns (  3.97x)
+PersonWithCachedProperties:       839.03 ns (  4.06x)
+      PersonWithProperties:       869.39 ns (  4.21x)
+           PersonDataclass:       889.45 ns (  4.31x)
+               PersonAttrs:       911.59 ns (  4.41x)
+          PersonNamedTuple:         1.09 µs (  5.29x)
+          PersonAttrsSlots:         1.14 µs (  5.53x)
+         PersonOrderedDict:         1.19 µs (  5.75x)
+         PersonAttrsFrozen:         1.19 µs (  5.76x)
+         PersonStructFixed:         1.25 µs (  6.05x)
+     PersonFrozenDataclass:         1.45 µs (  7.02x)
+    PersonAttrsFrozenSlots:         1.63 µs (  7.91x)
+               PersonArray:         1.65 µs (  7.99x)
+              PersonCTypes:         1.66 µs (  8.03x)
+PersonFrozenSlotsDataclass:         1.70 µs (  8.25x)
+         PersonStructArray:         1.75 µs (  8.46x)
+       PersonOperatorSlots:         1.80 µs (  8.70x)
+          PersonDescriptor:         1.93 µs (  9.35x)
+              PersonStruct:         2.05 µs (  9.90x)
+
+
+### ACCESS Time Performance ###
+
+Type                        Mean          Median        StdDev        Min           Max           Ops/sec        
+-----------------------------------------------------------------------------------------------------------------
+PersonClass                 105.57 ns     101.00 ns     66.80 ns      80.00 ns      66.08 µs      9,472,354      
+PersonSlotsClass            98.55 ns      100.00 ns     63.65 ns      80.00 ns      84.70 µs      10,146,789     
+PersonDataclass             112.89 ns     110.00 ns     789.73 ns     80.00 ns      3.93 ms       8,857,920      
+PersonFrozenDataclass       112.22 ns     110.00 ns     80.33 ns      80.00 ns      108.73 µs     8,911,400      
+PersonSlotsDataclass        478.59 ns     100.00 ns     1.90 ms       80.00 ns      9.48 s        2,089,456      
+PersonFrozenSlotsDataclass  100.68 ns     100.00 ns     1.25 µs       80.00 ns      5.43 ms       9,932,520      
+PersonNamedTuple            176.16 ns     171.00 ns     595.45 ns     150.00 ns     2.94 ms       5,676,717      
+PersonTypedDict             145.12 ns     141.00 ns     1.36 µs       120.00 ns     5.25 ms       6,890,982      
+PersonSubclassDict          260.99 ns     260.00 ns     629.74 ns     220.00 ns     3.12 ms       3,831,582      
+PersonAttrs                 100.69 ns     100.00 ns     715.78 ns     80.00 ns      3.56 ms       9,931,168      
+PersonAttrsSlots            101.54 ns     100.00 ns     60.25 ns      80.00 ns      101.14 µs     9,848,334      
+PersonAttrsFrozen           101.47 ns     100.00 ns     684.43 ns     80.00 ns      3.41 ms       9,854,784      
+PersonAttrsFrozenSlots      100.14 ns     100.00 ns     746.25 ns     80.00 ns      2.80 ms       9,985,544      
+PersonWithProperties        182.75 ns     180.00 ns     77.80 ns      150.00 ns     101.98 µs     5,471,975      
+PersonWithCachedProperties  1.62 µs       1.15 µs       1.91 ms       981.00 ns     9.30 s        618,487        
+PersonSimpleNamespace       221.54 ns     220.00 ns     89.47 ns      180.00 ns     129.91 µs     4,513,835      
+PersonOrderedDict           144.72 ns     140.00 ns     875.72 ns     120.00 ns     4.36 ms       6,909,935      
+PersonCTypes                699.90 ns     611.00 ns     421.10 µs     521.00 ns     2.11 s        1,428,766      
+PersonArray                 373.12 ns     370.00 ns     1.92 µs       310.00 ns     4.72 ms       2,680,104      
+PersonDescriptor            550.14 ns     541.00 ns     1.23 µs       470.00 ns     4.42 ms       1,817,710      
+PersonOperatorSlots         97.58 ns      100.00 ns     749.11 ns     80.00 ns      3.73 ms       10,247,801     
+PersonStruct                1.81 µs       1.69 µs       518.75 µs     1.52 µs       2.59 s        553,377        
+PersonStructFixed           1.22 µs       1.19 µs       1.91 µs       1.09 µs       4.23 ms       819,483        
+PersonStructArray           2.03 µs       1.98 µs       2.62 µs       1.82 µs       4.83 ms       493,498        
+
+### ACCESS Relative Performance (lower is better) ###
+
+       PersonOperatorSlots:        97.58 ns (  1.00x)
+          PersonSlotsClass:        98.55 ns (  1.01x)
+    PersonAttrsFrozenSlots:       100.14 ns (  1.03x)
+PersonFrozenSlotsDataclass:       100.68 ns (  1.03x)
+               PersonAttrs:       100.69 ns (  1.03x)
+         PersonAttrsFrozen:       101.47 ns (  1.04x)
+          PersonAttrsSlots:       101.54 ns (  1.04x)
+               PersonClass:       105.57 ns (  1.08x)
+     PersonFrozenDataclass:       112.22 ns (  1.15x)
+           PersonDataclass:       112.89 ns (  1.16x)
+         PersonOrderedDict:       144.72 ns (  1.48x)
+           PersonTypedDict:       145.12 ns (  1.49x)
+          PersonNamedTuple:       176.16 ns (  1.81x)
+      PersonWithProperties:       182.75 ns (  1.87x)
+     PersonSimpleNamespace:       221.54 ns (  2.27x)
+        PersonSubclassDict:       260.99 ns (  2.67x)
+               PersonArray:       373.12 ns (  3.82x)
+      PersonSlotsDataclass:       478.59 ns (  4.90x)
+          PersonDescriptor:       550.14 ns (  5.64x)
+              PersonCTypes:       699.90 ns (  7.17x)
+         PersonStructFixed:         1.22 µs ( 12.51x)
+PersonWithCachedProperties:         1.62 µs ( 16.57x)
+              PersonStruct:         1.81 µs ( 18.52x)
+         PersonStructArray:         2.03 µs ( 20.77x)
+
+
