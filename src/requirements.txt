@@ -1,7 +1,7 @@
 ### Some Helpful Imports ###
 
 uvloop ~= 0.21 # Replaces the asyncio event loop w/ libuv
-# tqdm ~= 4.66 # Progress Meter
+tqdm ~= 4.66 # Progress Meter
 # loguru ~= 0.7 # Quick Logging
 # PyYAML ~= 6.0 # YAML Parsing
 orjson ~= 3.10 # Faster JSON Parsing
