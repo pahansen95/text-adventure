@@ -12,8 +12,31 @@ def main(*argv: str) -> int:
     print("Usage: python script.py COUNT", file=sys.stderr)
     return 1
 
-  count = int(eval(argv[0]))
-  logger.info(f'User requested {count:,} tests per datastructure')
+  iterations = int(eval(argv[0]))
+  logger.info(f'User requested {iterations:,} tests per datastructure')
+
+  # Run all of the Benchmarks
+  measurements = pt.Benchmarks.BenchmarkRegistry.run_all_benchmarks(iterations)
+  # logger.debug(measurements)
+  metrics = pt.Benchmarks.BenchmarkRegistry.calc_all_metrics(measurements)
+  # logger.debug(metrics)
+  tables = pt.Benchmarks.BenchmarkRegistry.render_all_metrics(metrics)
+
+  ts = time.time()
+  now = datetime.fromtimestamp(ts)
+  buf = io.StringIO()
+
+  for reg_name, reg in tables.items():
+    print(f'### {reg_name} ###', file=buf)
+    for cls, table in reg.items():
+      print(f'# {cls.__qualname__} #', file=buf)
+      print(table, file=buf)
+  
+  print(buf.getvalue(), file=sys.stdout)
+  
+  return 0
+
+  ### OLD BELOW
   with conc.ProcessPoolExecutor() as pool:
     benchmark_results = pt.run_benchmarks_and_calculate_metrics(
       count, pool=pool,
