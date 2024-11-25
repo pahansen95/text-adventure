@@ -325,3 +325,82 @@ Correlation of identities to topics would be implemented by the message broker:
 
 - Subscriptions & Publishments are tied to Entity Identities & are modified by runtime conditions (ie. Topic Partition must exist before a subscription or publishment can be made).
 
+### What is the Vision of the PoC Game? What do I want to build?
+
+To help guide my efforts in developing the GameEngine, I need to articulate a simple vision for a PoC Game. Let's base the PoC's Vision on the Vision of the final game. This means we should scope down the vision to some minimal, singular game loop. To recap, the vision of the final game is a sprawling text based adventure RPG whose world is simulated where NPCs are simulated through LLMs. Such a game would need to implement the following game features (non-exhaustive):
+
+- NPCs: Some unique individual w/ a story & role; they are simulated using LLMs.
+- Agents: Any other agent in the world not classified as an NPC; ie. Monsters, Pets, etc...
+- The Environment: The physical space the game takes place in including any static objects like walls or mountains; entities would move around in this world.
+- Game Fixtures: Items w/ no agency but that can be interacted with. Examples include consumables, materials or loot.
+- World Events: Pre-Determined events that occur based on certain conditions like time or player level.
+- Inventory: The ability to carry & store Game Fixtures.
+
+So for our PoC let's narrow down a basic game feature/loop that A) requires use of all distributed system components (Message Broker, Control Loops, etc...), B) is relatively simple to implement & C) is player interactive. Here are my thoughts:
+
+- There needs to be at least 2 seperate entities, 1 of which is the player. The player entity requires control loops to process both world events & engine events. The 2nd entity would need to process world events at a minimum.
+- To keep things simple, a single player "action" should be implemented. This action, should cause some message propogation from the player to the 2nd entity. Ideally some response to the player entity should occur.
+
+Here are a few ideas:
+
+- Player Movement; Let the Player move their character within the boundary of the world:
+  - Capture Control Input (ie. Movement)
+  - Transform Player Position
+  - Collision Detection
+- NPC Interaction; Let the Player interact w/ an NPC (backed by an LLM):
+  - Capture Control Input (ie. NPC Selection and Text Inputs)
+  - Send/Recv Req/Resp
+  - NPC "Memory"
+- Player Movement & NPC Interaction:
+  - See both requirements
+
+Let's assume we do both & think through our design:
+
+- What are our Entities?
+  - Player: The Agent representing the Player.
+  - NPC: An Agent the player interacts with.
+  - 3DSpace: The space the player moves in
+- What are our Capabilities?
+  - Kinematics: The ability for entities to move within the 3DSpace including collision detection.
+  - Interactivity: The ability for an Agent to be interacted with, in our case verbal communication.
+
+### What is a controller, how is it designed & implemented?
+
+First I will assert that a Controller is a piece of software that regulates the state of the (sub)system it's associated with. In our game engine there are multiple controllers that regulate multiple subsystems. Examples include, the Message Broker, Entities & the Engine Instance.
+
+In a distributed system, the control loop processes system events & transitions state according to defined rules. For example, if a NPC Entity receives an interaction event from a player, the NPC's World Control Loop is responsible for transitioning the Entity into it's "interactive" state which would afford the Player Realtime interactivity.
+
+With this in model mind, we need to consider how to design the controller. Let's think through the various responsibilities of the controller:
+
+- Handling of external events & internal events.
+- Reacting to the casual flow of events by transitioning process state.
+- Management of Process State.
+- Emitting Causal Events.
+
+Based on these responsibilities, let's think through the components of the controller:
+
+- Event Handler: Implementing functionality to send & receive causal events.
+  - Interfaces with the Message Brokers to offload tx/rx specifics
+- State Manager: Implementing CRUD functionality for process state.
+  - Interfaces with the Entity Resource Spec & Status
+- State Transition Engine: Implementing functionality to transition the state of the process.
+  - "State Transitions" are the "runtime logic" of the entity including...
+    - World Semantics; ex. Respond accordingly to a world event
+    - Engine Integrations; ex. Injecting a movement event based on keyboard input.
+  - State transitions aren't atomic; they are composed of atomic "actions" chained together. Therefore a state transition can be cancelled in between atomic actions resulting in a partial state transition.
+
+Let's dig into how to implement the state transition engine. Various strategies include:
+
+- **Event Callbacks**
+
+  When an event is received, it invokes an associated functional interface of the capability. In the example of "movement", the "kinematics" interface implemented by the entity would be invoked. Whether or not a callback is idempotent is up to the implementation: multiple movements should stack while multiple "interactive" requests should only apply once per "session". There is no "engine" that holistically orchestrates transition of state; transitions can be concurrently invoked by callbacks. The "engine" is implicitly provided by the imperative statement, evaluations & conditions distributed across all of the entity's possible capabilities.
+
+- **Behavior Trees**
+
+  An Entity's capabilities are modeled as a hierarchical tree of behavior. The root nodes serves as the entry point to the capability & each node implements specific functionality associated w/ the capability. As events & conditions occur, the tree is walked adjusting entity behavior. For example, in a "movement" capability, let there be a root "idle" node sharing an edge w/ a "walk" node. When a transform event is received, the current index would transition from "idle" to "walk". After the transformation concludes, then the behavior tree completes & the state resets to the root node.
+
+- **Petri Nets**
+
+  A Directed Graph of Places & Transitions where places detail a possible substate & transitions encapsulate a particular capability. Tokens are associated w/ places to indicate the current substate of the system. On graph evaluation (triggered by some event for example), transitions are evaluated if they can be triggered (all input places have an associated token); if so the transition's input tokens are consumed, the capability is applied & tokens are set on the output places. In this model, a capability is broken down into atomic transactions which the controller incrementally evaluates. In this way, a capability can be partially applied if some event occurs that disrupts and/or redirects input tokens from the capability arc/path. This can also be used to determine concurrency deadlocks for an entity or to conduct advanced analysis of the implementation.
+
+All things considered, the Petri net appears to be the preferred implementation strategy for the State Transition Engine based on A) it's provided functionality & B) it's seemingly straighforward ability to integrate incremental evaluation into a control loop.
