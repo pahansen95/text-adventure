@@ -366,11 +366,11 @@ Let's assume we do both & think through our design:
 
 ### What is a controller, how is it designed & implemented?
 
-First I will assert that a Controller is a piece of software that regulates the state of the (sub)system it's associated with. In our game engine there are multiple controllers that regulate multiple subsystems. Examples include, the Message Broker, Entities & the Engine Instance.
+First I will assert that a Controller is a piece of software that regulates the state of the (sub)system it's associated with. In our game engine there are multiple controllers that regulate multiple subsystems. Example Subsystems implementing a controller include, the Message Broker, Entities & the Engine Instance.
 
 In a distributed system, the control loop processes system events & transitions state according to defined rules. For example, if a NPC Entity receives an interaction event from a player, the NPC's World Control Loop is responsible for transitioning the Entity into it's "interactive" state which would afford the Player Realtime interactivity.
 
-With this in model mind, we need to consider how to design the controller. Let's think through the various responsibilities of the controller:
+With this model in mind, we need to consider how to design the controller. Let's think through the various responsibilities of the controller:
 
 - Handling of external events & internal events.
 - Reacting to the casual flow of events by transitioning process state.
@@ -380,7 +380,7 @@ With this in model mind, we need to consider how to design the controller. Let's
 Based on these responsibilities, let's think through the components of the controller:
 
 - Event Handler: Implementing functionality to send & receive causal events.
-  - Interfaces with the Message Brokers to offload tx/rx specifics
+  - Interfaces with the Message Brokers to offload tx/rx implementation
 - State Manager: Implementing CRUD functionality for process state.
   - Interfaces with the Entity Resource Spec & Status
 - State Transition Engine: Implementing functionality to transition the state of the process.
@@ -393,7 +393,7 @@ Let's dig into how to implement the state transition engine. Various strategies 
 
 - **Event Callbacks**
 
-  When an event is received, it invokes an associated functional interface of the capability. In the example of "movement", the "kinematics" interface implemented by the entity would be invoked. Whether or not a callback is idempotent is up to the implementation: multiple movements should stack while multiple "interactive" requests should only apply once per "session". There is no "engine" that holistically orchestrates transition of state; transitions can be concurrently invoked by callbacks. The "engine" is implicitly provided by the imperative statement, evaluations & conditions distributed across all of the entity's possible capabilities.
+  When an event is received, it invokes an associated functional interface of the capability. In the example of "movement", the "kinematics" interface implemented by the entity would be invoked. Whether or not a callback is idempotent is up to the implementation: multiple movements should stack while multiple "interactive" requests should only apply once per "session". There is no "engine" that holistically orchestrates transition of state; transitions can be concurrently invoked by callbacks. The "engine" is implicit in the imperative statement, evaluations & conditions distributed across all of the entity's capability interfaces.
 
 - **Behavior Trees**
 
@@ -403,4 +403,18 @@ Let's dig into how to implement the state transition engine. Various strategies 
 
   A Directed Graph of Places & Transitions where places detail a possible substate & transitions encapsulate a particular capability. Tokens are associated w/ places to indicate the current substate of the system. On graph evaluation (triggered by some event for example), transitions are evaluated if they can be triggered (all input places have an associated token); if so the transition's input tokens are consumed, the capability is applied & tokens are set on the output places. In this model, a capability is broken down into atomic transactions which the controller incrementally evaluates. In this way, a capability can be partially applied if some event occurs that disrupts and/or redirects input tokens from the capability arc/path. This can also be used to determine concurrency deadlocks for an entity or to conduct advanced analysis of the implementation.
 
-All things considered, the Petri net appears to be the preferred implementation strategy for the State Transition Engine based on A) it's provided functionality & B) it's seemingly straighforward ability to integrate incremental evaluation into a control loop.
+All things considered, the Petri net appears to be the preferred implementation strategy for the State Transition Engine based on A) it's provided functionality & B) it's seemingly straightforward ability to integrate incremental evaluation into a control loop.
+
+Let us discuss how the controller implementation is formatted & organized:
+
+- Every Entity Kind registers corresponding controllers; one for the world & one for the engine.
+- Controllers are composed of multiple parts:
+  - A Central Control Loop that continuously iterates
+  - A Event Handler that integrates between the Message Broker & the Entity
+  - A State Manager that provides causal state functionality.
+  - A State Engine that implements the state transition & logic of an entity.
+    - The Entity also associates and/or implements capabilities through functional interfaces. The State Engine orchestrates application of these capabilities.
+- The Control loop manages scheduling & lifecycle of the controller's various subtasks. It walks through a predetermined set of steps.
+
+### 
+
