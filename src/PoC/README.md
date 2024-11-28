@@ -416,5 +416,57 @@ Let us discuss how the controller implementation is formatted & organized:
     - The Entity also associates and/or implements capabilities through functional interfaces. The State Engine orchestrates application of these capabilities.
 - The Control loop manages scheduling & lifecycle of the controller's various subtasks. It walks through a predetermined set of steps.
 
-### 
+### How does the State Transition Engine integrate w/ an Entity's capabilities?
+
+To start our discussion, let's recall how we proposed capabilities are designed & implemented:
+
+- Capabilities define functional protocols & common state which any participating entity must implement, thereby providing structural typing for capabilities.
+- Capability State has ownership; either singular, shared or federated.
+  - In singular ownership, a single entity owns all state & all other entities must request read/write operations against this entity in order to observe or act on this state. IE. The 3D Space fronts R/W Operations for all entity positions.
+  - In shared ownership, the same state is replicated between entities. Before read/writes can occur, entities must reach a consensus on the current state version. IE. The Positions for each Entity are replicated between the respective Entity & the 3D Space; any R/W Operations on entity position requires consensus between the Entity & 3DSpace.
+  - In federated ownership, the state is modeled as a set of substates where individual substates are owned by individual entities. These substates define that entity's specific condition of being. IE. Every entity capable of having a position in the 3D Space owns it's own 3D Position; any R/W Operations on an Entity's Position requires the other entity requesting the operation against the owning Entity.
+- Invoking a Capability Protocol requires message passing between entities (ie. Lamport Processes) thereby creating a casual dependency between discrete entities. The approach to invoking a remote entity's capability protocol is effectively asynchronous RPC irrespective of the stylistic programming interface provided to the developer (ie. Calling a class member vs constructing a RPC Message).
+
+These fundamental design conditions imply that an entity, processing world events in synchronous order, can be fully blocked by another entity causing a potential world deadlock if all entities form a cyclical graph of blocking dependencies. It is therefore imperative that implementation of capabilities are A) fully asynchronous, B) decomposed into atomic unit operations & C) designed to cooperatively avoid cyclical blocking dependencies.
+
+This leads us to discuss how to integrate entity capabilities & the state transition engine. Up till now we have largely avoided articulating specific implementation patterns for capabilities. It is here, now, that we manifest the implementation of capabilities.
+
+Firstly, let us assert constraining conditions:
+
+- The state transition engine invokes the capability's functional protocol. 
+- It then leads that the individual members of the functional protocol are the originators of...
+  - Remote Procedure Calls to external entities (ie. External Events).
+  - Local Procedure Calls to the internal entity (ie. Internal Events).
+  - State Manipulation of the internal entity.
+
+Next, let us articulate what specifically is a capability protocol member:
+
+- A Member is simply some callable software fragment such as a function or callable object.
+- Member implementation is implemented in multiple locations; namely...
+  - The Protocol itself; ie. A shared or common Implementation
+  - The Participating Entity; ie. An overridden or extended function
+- Member implementation may occur at both at the protocol & at the participating entity; dependent on the needs & design of the capability.
+
+Next, let us articulate how a member manipulates the internal state and/or generates internal events respective to the entity which called the member:
+
+- When an entity calls the member, beyond passing the capability's expected arguments, it injects into the member the required dependencies of that member, such as the entity's state manipulation interface, the entity's messaging bus & any other interfaces necessary to invoke state changes.
+- As the member evaluates its procedural logic, it hooks into the entity's interface as the mechanism by which to invoke change.
+- Members may end up calling, through the entity, other members thereby creating dependencies between sibling members or members of other capabilities. These dependencies can be graphed & analyzed to determine the presence of certain concurrency pitfalls such as cyclical dependencies.
+
+Through this approach, the Entity embodies a capability without the need to explicitly implement the capability. The entity may still, optionally, extend or override the capability interface.
+
+Now let us articulate the mechanism by which the state transition engine originally invokes a capability:
+
+- When the State transition engine evaluates its input conditions, if any conditions are met, then that transition is triggered.
+- Triggered transitions are subsequently scheduled. These triggered transitions themselves invoke the members of the associated capability protocol.
+
+Let us then articulate what is a state transition & a state "place":
+
+- A state place is a specific named condition of being; ex. "idle" or "walking". When certain conditions are held, then it can be said that the (sub)state is in a certain place. Tokens indicate currently held places.
+- A state transition describes a path that maps between two sets of places, an input set & an output set. If all places in the input set are held (ie. Have tokens), then the transition can be evaluated. Tokens are placed on the output set dependent on the evaluation.
+
+This considered implies several statements...
+
+- Capabilities not only describe a protocol & common state but also describe a set of places & transitions. The State network is therefore a superset of the place & transition sets of all participating capabilities.
+- Evaluation of triggered transitions in the State Network is asynchronous of evaluation of transitions themselves. This is b/c transitions can call on other capability members which can adjust the distribution of tokens in the state network thereby triggering other transitions. In other words, transitions can be dependent on or cascade other transitions.
 
