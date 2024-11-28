@@ -424,7 +424,7 @@ To start our discussion, let's recall how we proposed capabilities are designed 
 - Capability State has ownership; either singular, shared or federated.
   - In singular ownership, a single entity owns all state & all other entities must request read/write operations against this entity in order to observe or act on this state. IE. The 3D Space fronts R/W Operations for all entity positions.
   - In shared ownership, the same state is replicated between entities. Before read/writes can occur, entities must reach a consensus on the current state version. IE. The Positions for each Entity are replicated between the respective Entity & the 3D Space; any R/W Operations on entity position requires consensus between the Entity & 3DSpace.
-  - In federated ownership, the state is modeled as a set of substates where individual substates are owned by individual entities. These substates define that entity's specific condition of being. IE. Every entity capable of having a position in the 3D Space owns it's own 3D Position; any R/W Operations on an Entity's Position requires the other entity requesting the operation against the owning Entity.
+  - In federated ownership, the state is modeled as a set of individual substates each owned by discrete entities. These substates define that entity's specific condition of being in time. IE. Every entity capable of having a position in the 3D Space owns its own 3D Position; any R/W Operations on an Entity's Position requires the other entity requesting the operation against the owning Entity.
 - Invoking a Capability Protocol requires message passing between entities (ie. Lamport Processes) thereby creating a casual dependency between discrete entities. The approach to invoking a remote entity's capability protocol is effectively asynchronous RPC irrespective of the stylistic programming interface provided to the developer (ie. Calling a class member vs constructing a RPC Message).
 
 These fundamental design conditions imply that an entity, processing world events in synchronous order, can be fully blocked by another entity causing a potential world deadlock if all entities form a cyclical graph of blocking dependencies. It is therefore imperative that implementation of capabilities are A) fully asynchronous, B) decomposed into atomic unit operations & C) designed to cooperatively avoid cyclical blocking dependencies.
@@ -442,7 +442,7 @@ Firstly, let us assert constraining conditions:
 Next, let us articulate what specifically is a capability protocol member:
 
 - A Member is simply some callable software fragment such as a function or callable object.
-- Member implementation is implemented in multiple locations; namely...
+- Member implementation occurs in multiple locations; namely...
   - The Protocol itself; ie. A shared or common Implementation
   - The Participating Entity; ie. An overridden or extended function
 - Member implementation may occur at both at the protocol & at the participating entity; dependent on the needs & design of the capability.
@@ -470,3 +470,19 @@ This considered implies several statements...
 - Capabilities not only describe a protocol & common state but also describe a set of places & transitions. The State network is therefore a superset of the place & transition sets of all participating capabilities.
 - Evaluation of triggered transitions in the State Network is asynchronous of evaluation of transitions themselves. This is b/c transitions can call on other capability members which can adjust the distribution of tokens in the state network thereby triggering other transitions. In other words, transitions can be dependent on or cascade other transitions.
 
+### How is a Capability Formally Implemented?
+
+A Capability implements:
+
+- State
+  - The specific conditions of being at a specific moment in time.
+  - Implemented as a Key-Value Registry.
+- Protocol
+  - The functional interface encapsulating the procedures implementing the semantics of the capability.
+  - The callable members of the protocol are classified as intrinsic/internal or extrinsic/external.
+    - Intrinsic/Internal members provide common implementation specific to that protocol's semantics.
+    - Extrinsic/External members are entity specific implementation of the protocol's semantics.
+  - Participating Entities must implement the extrinsic members of a capability; The intrinsic members call these as hooks. This allows entity implementations to inject semantic dependencies.
+  - When calling Intrinsic members, any stateful conditions must be passed at runtime. Such an example would be the calling entity or the message handling interface for the entity.
+- State Transition (sub)Graph
+  - The set of Places & Transitions describing the sequencing, conditions & mapping of the protocol's procedures.
