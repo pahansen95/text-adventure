@@ -490,3 +490,37 @@ A Capability implements:
 ### How is the State Transition Engine Designed & Implemented?
 
 The State Transition Engine design & architecture is based on the Petri Net. It consists of a set of named `conditions` & `transitions`. `Transitions` map between input & output `conditions`. During runtime, tokens are placed on input `conditions` that currently exist. When the network is evaluated, `transitions` are triggered contingent on all input conditions existing.
+
+Let's explore this concept of modeling state & state transitions. To articulate our mental model we should start by answering some questions:
+
+- What is state?
+- What is implied by the phrase `state transition`?
+- How do we model this?
+
+First, let's scope ourselves to the cognitive realm of the Game Engine World composed of Entities.
+
+Let's define state: A measurable "condition of being" for a discrete entity at a particular point in (causal) time; manifests as the explicitly declared data-structure owned by the entity which can be read from & written to.
+
+A State transition can then be described as a mutation in state; ex. Entity's moving. State Mutability is constrained by the semantic rules governing behavior; ex. Two Entities implementing Kinematics can't occupy the same position in 3d Space. These rules are further predicated on pre-existing conditions; An entity cannot mutate its position without first having some intent to transform its orientation in 3D Space. The resultant of a state transition is another discrete state; if no mutation of state occurs then no transition occurred.
+
+This implies, assuming a standard procedural programming model, that we first must evaluate if a state transition can occur. If the evaluation holds true then the state mutation is applied. In a distributed system, where we are concurrently simulating the world, this mutation evaluation is only valid if the underlying state preconditions & the initial state hold; if they change before applying the mutation then there exists a probability the transition violated causality & was thereby implausible.
+
+Let us then consider an extreme scenario in which vast numbers of entities are simultaneously evaluating state transitions each somehow dependent on a subset of all other potential transitions; ex. 1 trillion entities moving within a finite, dense 3D Space. In this scenario, let us assert that:
+
+- Just 1 entity mutating its state (ie. Position) invalidates at least 1 other peer entity's evaluation almost always.
+- State Mutation is never instantaneous; evaluation always introduces some gap in time between intent to mutate & applied mutation.
+  - It is this gap in time that causes conflicts in causality as 1 entity's state mutation could invalidate another entity's computed evaluation before it is able to mutate its state.
+
+From the perspective of a developer implementing a "world" we can conjure up a few mental models to inform an implementation supporting this extreme scenario:
+
+- We ensure no violations of causality occur through exhaustive control over the simulation; every mutation is evaluated sequentially thereby ensuring that every intent to mutate is predicated on the true state of the world. In this mental model, we effectively "freeze time" in the world simulation in order to evaluate a transition. For a "small" world, freezing time can still feel instantaneous for players since it can happen on timescales well below the threshold of human cognitive processing. However the player experience degrades for "large" worlds where the computational burden of simulation exceeds the subjective timescale of "smooth" gameplay. In either case, the world is simulated w/ 100% casual accuracy.
+- We allow entities to concurrently & independently evaluate state transitions based on their "observable" world state, tolerating violations of causality to maximize throughput & scale of world simulation. In this approach, the quantity of causal violations is based on some probabilistic model. In the event of a detected violation, the offending entities would need to reconcile their state. A byproduct of this mental model is that inter-entity communication scales exponentially relative to population size, assuming that the main mode of communication is broadcasting. To manage scaling, we should instead use multicasting patterns where entity's proactively manage their group memberships.
+
+As it relates to our design & implementation goals, the later mental model is preferred. But what implications does this have on our mental model of State & State Transitions?
+
+- State has ownership as discussed in prior sections; the relevant data must be maintained.
+- Transitions reliant on external state are predicated on a snapshot of observable conditions; refresh of the snapshot is triggered on some event.
+- Entities must request state from peers in order to observe the world.
+- State Mutation is an Event (in a distributed system) & should be published to interested parties.
+- To manage issues introduced by scaling, the semantic model of a capability should incorporate the concept of microcosms; the effects of a transition should be scoped to only those entities most immediately affected as opposed to broadcasting to all entity's in the world. This could be implemented via Multicast Groups.
+
