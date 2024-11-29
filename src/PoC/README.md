@@ -524,3 +524,17 @@ As it relates to our design & implementation goals, the later mental model is pr
 - State Mutation is an Event (in a distributed system) & should be published to interested parties.
 - To manage issues introduced by scaling, the semantic model of a capability should incorporate the concept of microcosms; the effects of a transition should be scoped to only those entities most immediately affected as opposed to broadcasting to all entity's in the world. This could be implemented via Multicast Groups.
 
+Let us loop back to our discussion on the implementation of the State Transition Graph & scrutinize the concepts of "places", "transitions" & "tokens":
+
+- A transition is the process by which an entity's state is mutated.
+- A place is some named condition mapping to a discrete substate configuration.
+- A token indicates the existence of a place in a moment in time. Tokens therefore are sortable by (casual) time.
+- Places are connected through transitions as mappings of Inputs to Outputs.
+- Evaluation of the entire State Network is asynchronous.
+- Applied transitions consume tokens immediately after a state mutation; this implies an evaluation occurs before the token is consumed.
+- Placement & Consumption of tokens, which map to state mutation, are internal events that should trigger re/evaluation of the state graph. This implies that no modification of tokens results in no evaluation of the state graph.
+- A failed evaluation of a transition implies no mutation & no consumption of tokens. Note that by failed evaluation, we imply the evaluation of the state transition resulted in an illegal state & is thereby rejected.
+
+How does this then iterate our design & implementation of the State Network?
+
+- ...
