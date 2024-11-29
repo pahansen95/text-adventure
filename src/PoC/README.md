@@ -486,3 +486,7 @@ A Capability implements:
   - When calling Intrinsic members, any stateful conditions must be passed at runtime. Such an example would be the calling entity or the message handling interface for the entity.
 - State Transition (sub)Graph
   - The set of Places & Transitions describing the sequencing, conditions & mapping of the protocol's procedures.
+
+### How is the State Transition Engine Designed & Implemented?
+
+The State Transition Engine design & architecture is based on the Petri Net. It consists of a set of named `conditions` & `transitions`. `Transitions` map between input & output `conditions`. During runtime, tokens are placed on input `conditions` that currently exist. When the network is evaluated, `transitions` are triggered contingent on all input conditions existing.
