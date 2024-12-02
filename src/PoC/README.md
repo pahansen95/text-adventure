@@ -416,6 +416,80 @@ Let us discuss how the controller implementation is formatted & organized:
     - The Entity also associates and/or implements capabilities through functional interfaces. The State Engine orchestrates application of these capabilities.
 - The Control loop manages scheduling & lifecycle of the controller's various subtasks. It walks through a predetermined set of steps.
 
+### What is State in a distributed system? How does it relate to Causality?
+
+Let us refine & distill our mental models of State & Causality. First, let us preface the predicates, axioms & assertions of our current mental models:
+
+- A distributed system is a set of processes (ie. entities) operating concurrently wherein events of the system are shared via message passing. The ordering of messages in time define causality. Message ordering is determined by the "comes before" property as defined by Lamport.
+- Events can be internal or external:
+  - Internal Messages are only ever seen by the producing process & are never shared.
+  - External Messages are produced by one process & seen by peers. This implies message passing.
+- The Distributed system is designed to be cooperatively concurrent; processes are the base unit of cooperation. A Process itself must be causally consistent.
+- The System implements a Computational Model & a Domain Model.
+  - The Computational model provides the fundamental tools & frameworks for simulating the domain model (Ie. The Game Engine). It is predicated on the nondeterministic behavior inherent in computer hardware, networks & the like (arising from the fundamental nondeterministic physical laws of the universe).
+  - The Domain Model implements the world semantics as described by the developer (Ie. The Game World). Generally, it is predicated on human mental models that qualify deterministic behaviors (patterns & logic) from our nondeterministic universe.
+  - A properly designed solution ensures separation of concerns between the domain model & the computational model. The domain model does not concern itself with how the distribution of the system is provided, instead solely relying on the constructs provided by the computational model (such as a message broker).
+- The Domain model defines a simulated world composed of entities and their capabilities. A capability is a protocol outlining the procedures and expected substate of semantic behavior, while an entity serves as a container that maintains state and continuously evaluates its capabilities. The model is decomposed into fundamental behaviors and states (i.e., capabilities), which are composited into basal semantic unit templates. These templates are instantiated as entities during simulation to construct the world. World simulation involves the continuous evaluation of entities, where their capabilities are executed, their state is mutated, and semantic messages are exchanged based on world events to cooperatively advance the simulation.
+
+Now, let us begin to articulate state & causality:
+
+- State is defined as a configuration of condition in a particular moment in time. In practice state is encoded as a store of key value pairs.
+- A mutation of state is defined as modification of the key value store. State mutation stems from an actively executing capability protocol writing state to an entity.
+- Causal events in the domain model system are caused by A) state mutation & B) message passing between entities.
+
+Let us introduce the term `transition` being defined as the process of changing from one state to another. A transition contextualized to a simulation of a domain model is therefore the process by which state mutation occurs. Since capabilities invoke state mutations, the process of a transition is the protocol member of the capability in question. The Capability's protocol member implements the imperative behavior which prefaces a mutation; we call this `evaluation`. If evaluation fails then mutation does not occur.This then leads the question, what triggers a protocol member. This is a larger question of how are capabilities invoked?
+
+Let's consider a scenario of players moving in a 3d space. User keyboard input is somehow injected into the domain model as some intent to move. This intent to move is what triggers the kinematics capability which updates the position state of the player entity. This intent to move is the precondition of the movement transformation. So what then is this intent to move? Let's work from both angles to meet in the middle:
+
+- A "transform" protocol member exists which applies some movement vector to the entity's state. If the movement is legal, then the entity's position state is updated.
+- The user provides keyboard input, the game engine (computational model) receives this input & produces a movement vector to be applied.
+- If "intent to move" is what triggers the "transform" protocol, then the game engine must directly invoke "intent to move" & inject the movement vector it generated.
+- Likewise if two entity's collide, then this collision generates movement vectors (indirectly or otherwise) that would then need be injected into each other through a remote procedure call to the "intent to move" protocol member.
+
+We can conclude that the "intent to move" protocol member of the kinematics capability is the precondition of the transformation. It would seem that the "transformation" protocol member of the kinematics capability cannot then be directly invoked as is; only being able to be indirectly invoked through "intent to move". Let's unpack this a bit further. Movement is the mutation itself: writing the new position to the state store. "Intent to Move" is the evaluation: validating the movement vector applied against the current position is legal. The movement vector being available is therefore the precondition since it must exist before "intent to move" can be invoked.
+
+Let's recap our mental model of state:
+
+- Entities maintain their current configuration through a data store.
+- Capability protocol members describe a transition, being triggered on some requisite event, involving semantic evaluation followed by a subsequent mutation only if the semantic evaluation concludes the proposed changes are semantically valid.
+  - Evaluations validate if a state mutation is legal according to the domain model's rules. Evaluations are not a part of the world; they are byproducts of simulating the world.
+  - Mutation is simply the action of writing the new condition configuration.
+  - Requisite Event being some conditioned occurrence of a world process itself producing some relevant context.
+
+What implications can we derive from our mental model:
+
+- The world must be initialized w/ some requisite events in order to trigger transitions.
+- The world may encounter a configuration wherein no transitions can occur; it is unclear if this is desired (ie. A lazy simulation) or an error (ie. A deadlock).
+- A directed graph of transitions can be constructed which details causal relationships between world events & external inputs. This graph could be used for A) static analysis of domain model design or B) runtime evaluation of capability triggers.
+- State has ownership by entities. Ownership is articulated as a combination of A) placement, B) consistency & C) authority:
+  - Placement defining where data is stored.
+  - Consistency defining when data is written.
+  - Authority describing whom writes data.
+- Capabilities have intrinsic & extrinsic protocol members. The distinction being that intrinsic members are invoked only from within their capability by other protocol members while extrinsic members additionally may be invoked from outside their capability.
+- Capabilities represent a structural typing system. Individual entity templates may override or extended capability protocol members. Such scenarios could include A) integrations between multiple capabilities implementing some discrete semantic concept, B) allowing inheritance of entities or C) "virtual" state such as sharing state keys or dynamically computing values.
+- Causal relationships between entities cannot be known until entity observes a peer's state. From the perspective of the observing entity, observation occurs at reception of a remote event detailing peer state. From the perspective of the entity being observed, observation occurs at sending of said event. Therefore, entities can only ever assert complete knowledge over their internal state. External state is only ever a snapshot in some past time; this differential is called causal latency.
+- If two discrete entities invoke an extrinsic capability member of a third peer triggered on some observed state event from the common peer, a causal race condition is created. Only one such request will successfully mutate the common peer's state, while the other will fail at evaluation time.
+- If the peer, which invoked the extrinsic capability member having failed, continued it's internal simulation assuming it's call instead passed (rather than blocking on a response), then causality has been violated & the simulation "timeline" trunk has branched.
+
+Let us now consider reconciliation of conflicts in causality. First, let's predicate axioms of causality:
+
+- Each entity can assert the absolute configuration of state it owns at any point in time; ie. It's causally consistent.
+- An entity can only assert a probability of configuration of state it does not own based upon observational snapshots & casual latency of said observations.
+- A causal conflict occurs when an entity's causal log (ie. chain of causal events) includes an incorrectly predicated external state. Such a conflict cannot be known until that external state is observed.
+
+What then does it mean to reconcile a causal conflict? We assert:
+
+- By the nature of distributed systems, no conflicting entities (being a semantic construct of the domain model) may assert absolute configuration of any peer except in the case where the simulation of the domain world is "frozen", thereby ensuring no transitions, evaluations or other computational modifications may occur.
+- Reconciliation implies restoring the cooperative nature of the conflicting entities.
+  - In the case where world simulation is frozen this involves rolling back & synchronizing the causal logs of the conflicting entities. This would imply all events in the world that did not "happen before" would need to be discarded, effectively resetting the simulation to a point in time in the past.
+  - In the case where world simulation continues, this involves applying transformations to the conflicting entities' casual logs such that they meet a threshold of "most likely". What this means specifically requires further thought.
+
+...
+
+> My original mental model was transitions have preconditions (ie. places), that trigger transitions with result in postconditions. If a precondition is met then a transition is triggered. A transition was composed of an evaluation & a mutation. Mutation involved writing state while evaluation involved validating a mutation was legal as per the rules of the Domain Model. Therefore, a state graph existed where places & transitions were connected by edges & upon iterative evaluation of the graph, transitions where triggered dependent on existing conditions (indicated by tokens).
+
+---
+
 ### How does the State Transition Engine integrate w/ an Entity's capabilities?
 
 To start our discussion, let's recall how we proposed capabilities are designed & implemented:
@@ -513,8 +587,8 @@ Let us then consider an extreme scenario in which vast numbers of entities are s
 
 From the perspective of a developer implementing a "world" we can conjure up a few mental models to inform an implementation supporting this extreme scenario:
 
-- We ensure no violations of causality occur through exhaustive control over the simulation; every mutation is evaluated sequentially thereby ensuring that every intent to mutate is predicated on the true state of the world. In this mental model, we effectively "freeze time" in the world simulation in order to evaluate a transition. For a "small" world, freezing time can still feel instantaneous for players since it can happen on timescales well below the threshold of human cognitive processing. However the player experience degrades for "large" worlds where the computational burden of simulation exceeds the subjective timescale of "smooth" gameplay. In either case, the world is simulated w/ 100% casual accuracy.
-- We allow entities to concurrently & independently evaluate state transitions based on their "observable" world state, tolerating violations of causality to maximize throughput & scale of world simulation. In this approach, the quantity of causal violations is based on some probabilistic model. In the event of a detected violation, the offending entities would need to reconcile their state. A byproduct of this mental model is that inter-entity communication scales exponentially relative to population size, assuming that the main mode of communication is broadcasting. To manage scaling, we should instead use multicasting patterns where entity's proactively manage their group memberships.
+- We ensure no violations of causality occur through exhaustive control over the simulation; every mutation is evaluated sequentially thereby ensuring that every intent to mutate is predicated on the absolute state of the world. In this mental model, we effectively "freeze time" in the world simulation in order to evaluate a transition. For small worlds, freezing time can still feel instantaneous for players since it can happen on timescales well below the threshold of human cognitive processing. However the player experience degrades for large worlds where the computational burden of simulation exceeds the subjective timescale of smooth gameplay. In either case, the world is simulated w/ 100% casual accuracy.
+- We allow entities to concurrently & independently evaluate state transitions based on their "observable" world state, tolerating violations of causality deferring reconciliation until necessary as to maximize throughput & scale of world simulation. In this approach, the quantity of causal violations is based on some probabilistic model. In the event of a detected violation, the offending entities would need to reconcile their state. A byproduct of this mental model is that inter-entity communication scales exponentially relative to population size, assuming that the main mode of communication is broadcasting. To manage scaling, we should instead use multicasting patterns where entity's proactively manage their group memberships.
 
 As it relates to our design & implementation goals, the later mental model is preferred. But what implications does this have on our mental model of State & State Transitions?
 
@@ -562,4 +636,6 @@ To resolve a conflict, we could employ various strategies:
 - Rolling back the simulation to the root of the divergence, resetting state & resuming simulation.
 
 Either case involves overwriting causality & is predicated on a mental model of determinism in the domain model. However the computational model is predicated on the fundamental nature of our universe which is nondeterministic (according to current scientific evidence). How then does the mental model of causality & conflicts thereof shift if we predicate the domain model on concepts of nondeterminism?
+
+
 
