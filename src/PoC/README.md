@@ -424,7 +424,7 @@ To start our discussion, let's recall how we proposed capabilities are designed 
 - Capability State has ownership; either singular, shared or federated.
   - In singular ownership, a single entity owns all state & all other entities must request read/write operations against this entity in order to observe or act on this state. IE. The 3D Space fronts R/W Operations for all entity positions.
   - In shared ownership, the same state is replicated between entities. Before read/writes can occur, entities must reach a consensus on the current state version. IE. The Positions for each Entity are replicated between the respective Entity & the 3D Space; any R/W Operations on entity position requires consensus between the Entity & 3DSpace.
-  - In federated ownership, the state is modeled as a set of individual substates each owned by discrete entities. These substates define that entity's specific condition of being in time. IE. Every entity capable of having a position in the 3D Space owns its own 3D Position; any R/W Operations on an Entity's Position requires the other entity requesting the operation against the owning Entity.
+  - In federated ownership, the state is modeled as a collective set of substates distributed across many discrete entities which claim ownership of that substate. These substates define that entity's specific condition of being in time. IE. Every entity capable of having a position in the 3D Space owns its own 3D Position; any R/W Operations on an Entity's Position requires the other entity requesting the operation against the owning Entity.
 - Invoking a Capability Protocol requires message passing between entities (ie. Lamport Processes) thereby creating a casual dependency between discrete entities. The approach to invoking a remote entity's capability protocol is effectively asynchronous RPC irrespective of the stylistic programming interface provided to the developer (ie. Calling a class member vs constructing a RPC Message).
 
 These fundamental design conditions imply that an entity, processing world events in synchronous order, can be fully blocked by another entity causing a potential world deadlock if all entities form a cyclical graph of blocking dependencies. It is therefore imperative that implementation of capabilities are A) fully asynchronous, B) decomposed into atomic unit operations & C) designed to cooperatively avoid cyclical blocking dependencies.
@@ -501,7 +501,7 @@ First, let's scope ourselves to the cognitive realm of the Game Engine World com
 
 Let's define state: A measurable "condition of being" for a discrete entity at a particular point in (causal) time; manifests as the explicitly declared data-structure owned by the entity which can be read from & written to.
 
-A State transition can then be described as a mutation in state; ex. Entity's moving. State Mutability is constrained by the semantic rules governing behavior; ex. Two Entities implementing Kinematics can't occupy the same position in 3d Space. These rules are further predicated on pre-existing conditions; An entity cannot mutate its position without first having some intent to transform its orientation in 3D Space. The resultant of a state transition is another discrete state; if no mutation of state occurs then no transition occurred.
+A State transition can then be described as a mutation in state; ex. Entity's moving. State Mutability is constrained by the rules governing semantic behavior; ex. Two Entities implementing Kinematics can't occupy the same position in 3d Space. These rules are further predicated on pre-existing conditions; An entity cannot mutate its position without first having some intent to transform its orientation in 3D Space. The resultant of a state transition is another discrete state; if no mutation of state occurs then no transition occurred.
 
 This implies, assuming a standard procedural programming model, that we first must evaluate if a state transition can occur. If the evaluation holds true then the state mutation is applied. In a distributed system, where we are concurrently simulating the world, this mutation evaluation is only valid if the underlying state preconditions & the initial state hold; if they change before applying the mutation then there exists a probability the transition violated causality & was thereby implausible.
 
@@ -519,7 +519,7 @@ From the perspective of a developer implementing a "world" we can conjure up a f
 As it relates to our design & implementation goals, the later mental model is preferred. But what implications does this have on our mental model of State & State Transitions?
 
 - State has ownership as discussed in prior sections; the relevant data must be maintained.
-- Transitions reliant on external state are predicated on a snapshot of observable conditions; refresh of the snapshot is triggered on some event.
+- Transitions reliant on external state are predicated on the entity's current snapshot of observable conditions; refresh of this snapshot is triggered on some event.
 - Entities must request state from peers in order to observe the world.
 - State Mutation is an Event (in a distributed system) & should be published to interested parties.
 - To manage issues introduced by scaling, the semantic model of a capability should incorporate the concept of microcosms; the effects of a transition should be scoped to only those entities most immediately affected as opposed to broadcasting to all entity's in the world. This could be implemented via Multicast Groups.
@@ -535,6 +535,31 @@ Let us loop back to our discussion on the implementation of the State Transition
 - Placement & Consumption of tokens, which map to state mutation, are internal events that should trigger re/evaluation of the state graph. This implies that no modification of tokens results in no evaluation of the state graph.
 - A failed evaluation of a transition implies no mutation & no consumption of tokens. Note that by failed evaluation, we imply the evaluation of the state transition resulted in an illegal state & is thereby rejected.
 
-How does this then iterate our design & implementation of the State Network?
+Let's reflect on our current mental models & further refine them:
 
-- ...
+- State Ownership is better articulated as being a combination of A) placement, B) consistency & C) authority:
+  - Placement defining where data is stored.
+  - Consistency defining when data is written.
+  - Authority describing whom writes data.
+- The current model of a State Transition is predicated on the assumption that transitions, on a per-process basis, are mutually exclusive implying they are evaluated in casual order. However, if the underlying implementation of the entity relies on some form of asynchronous operations such that transitions are evaluated out of order, then temporal inconsistency between evaluation & mutation is introduced.
+- The domain model applied to the distributed system is served by the computational model of the distributed system. This implies a decoupling between the two models: a computational model can adjust to meet performance or needs of the operator so long as it provides the fundamental axioms of a distributed system the domain model is predicated upon.
+  - This implies that an entity is an atomic unit of model segmentation within the domain model; it can be assumed that a single entity is causally consistent within the scope of its locality.
+  - This further implies that the computational implementation of the entity must ensure that if state transition implementation is asynchronous or concurrent, then it must be implemented cooperatively or with certain mutual exclusion guarantees to ensure that the casual consistency of the domain model is upheld.
+- Therefore it's paramount the domain expert provides a domain model that adequately deconstructs semantics into base units as to avoid pushing all of the design complexities of distributed system into the process itself. Using strategies such as single responsibility can help w/ this, or deconstructing domain concepts into a hierarchy to identify base units as leaves of the tree.
+
+### How are Causal Conflicts reconciled?
+
+First, let's define what is a causal conflict:
+
+- Events in a distributed system are entity state transitions.
+- Causal ordering is a log of the systems events.
+- A conflict is a branching in this log rooted at some difference in event preconditions (ie. Caused by "latency" between observation & reality).
+
+To resolve a conflict, we could employ various strategies:
+
+- Pruning extraneous branches or otherwise selecting the new trunk branch.
+- Merging branches into a new trunk branch.
+- Rolling back the simulation to the root of the divergence, resetting state & resuming simulation.
+
+Either case involves overwriting causality & is predicated on a mental model of determinism in the domain model. However the computational model is predicated on the fundamental nature of our universe which is nondeterministic (according to current scientific evidence). How then does the mental model of causality & conflicts thereof shift if we predicate the domain model on concepts of nondeterminism?
+
