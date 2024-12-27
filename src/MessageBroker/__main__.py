@@ -72,12 +72,12 @@ async def peer_follower(broker: MessageBroker):
 
 async def broker_cloop(broker: MessageBroker):
   """Conducts Evaluation of the Broker"""
-  # Initialize the Broker
   await broker.topics._wait_for_topic('/Foo/Bar/1')
   assert '/Foo/Bar/1' in broker.topics._gens
   listener = broker.topics._gens['/Foo/Bar/1']['listener']
   router = broker.topics._gens['/Foo/Bar/1']['router']
 
+  # Initialize the Broker
   await asyncio.gather(*map(
     anext,
     (
@@ -86,6 +86,7 @@ async def broker_cloop(broker: MessageBroker):
     )
   ))
 
+  # Evaluate all Broker Components
   while True:
     # Evaluate Listeners
     await anext(listener)
