@@ -39,8 +39,8 @@ async def peer_leader(broker: MessageBroker):
   logger.info(f'Peer {PEER_ID}: Disconnecting from Broker')
   await peer_session.disconnect()
 
-async def peer_follower(broker: MessageBroker):
-  PEER_ID = md5(b'follower').hexdigest()
+async def peer_follower(broker: MessageBroker, idx: int):
+  PEER_ID = md5(f'follower_{idx}'.encode()).hexdigest()
 
   ### Connect to the Broker
 
@@ -100,8 +100,8 @@ async def main(argv: list[str], env: dict[str, str]) -> int:
   )
   broker_eval = asyncio.create_task(broker_cloop(broker))
   async with asyncio.TaskGroup() as tg:
-    leader_task = tg.create_task(peer_leader(broker))
-    follower_task = tg.create_task(peer_follower(broker))
+    for idx in range(10): tg.create_task(peer_follower(broker, idx))
+    tg.create_task(peer_leader(broker))
   broker_eval.cancel()
   try: await broker_eval
   except asyncio.CancelledError: pass

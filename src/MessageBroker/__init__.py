@@ -229,9 +229,10 @@ class TopicPartition:
 
     # TODO: Refactor so we push things concurrently
     for peer_id in peer_ids:
-      try: await self.subscribers[peer_id].push(msg)
+      try: await self.subscribers[peer_id].push(msg.copy(recv=CasualEvent())) # TODO: Does this do what I think it does?
       except StreamOverload as e: raise NotImplementedError from e
     # TODO: What happens if we fail to route the message to a peer? Do we fail everything? Do we retry just the peer? Handle Now or Later?
+    msg.recv.set() # TODO: Do we need to set this on the original message?
 
   async def router(self) -> AsyncGenerator[None, None, None]:
     """Route Messages"""
@@ -337,9 +338,23 @@ class Message:
   sent: CasualEvent = field(default_factory=CasualEvent)
   recv: CasualEvent = field(default_factory=CasualEvent)
 
+  def copy(self, **kwargs) -> Message:
+    """Create a shallow copy of the Message; useful for overridding certain things such as destination or casual events"""
+    return Message(**{
+      'id': self.id,
+      'src': self.src,
+      'dst': self.dst,
+      'topic': self.topic,
+      'payload': self.payload,
+      'sent': self.sent,
+      'recv': self.recv,
+      **kwargs,
+    })
+
   def is_broadcast(self) -> bool: return AddrPath.is_broadcast(self.dst)
   def is_multicast(self) -> bool: return AddrPath.is_multicast(self.dst)
   def is_unicast(self) -> bool: return AddrPath.is_unicast(self.dst)
+
 
 # @dataclass
 # class TopicRegistryPeerView:
