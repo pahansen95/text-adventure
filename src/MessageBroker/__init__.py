@@ -1,8 +1,9 @@
 from __future__ import annotations
-from dataclasses import dataclass, field, KW_ONLY
+from dataclasses import dataclass, field, KW_ONLY, fields
 from typing import TypedDict, TypeVar, Generic, Any, Protocol, Literal, NamedTuple
-from collections.abc import Callable, ByteString, Iterator, AsyncGenerator, Mapping
+from collections.abc import Callable, ByteString, Iterator, AsyncGenerator, Mapping, Hashable, Coroutine, AsyncIterator
 from collections import deque
+from contextlib import asynccontextmanager
 
 import logging, asyncio, time
 
@@ -12,6 +13,10 @@ _DATUM = time.monotonic_ns()
 def _get_time() -> int: return time.monotonic_ns() - _DATUM # TODO: Refactor out
 
 class StreamOverload(RuntimeError): ...
+class TopicError(RuntimeError):
+  def __init__(self, topic: str, *args):
+    super().__init__(*args)
+    self.topic = topic
 
 @dataclass
 class MessageStream:
@@ -30,12 +35,7 @@ class MessageStream:
   def size(self) -> int:
     """The current size of the message stream in bytes"""
     return self._size
-  
-  @property
-  def count(self) -> int:
-    """The current number of messages in the log"""
-    return len(self.log)
-  
+    
   def __len__(self) -> int: return len(self.log)
 
   async def pop(self) -> Message:
@@ -109,6 +109,10 @@ class StreamRegistry:
   def __iter__(self) -> Iterator[StreamIdx]: return iter(self.streams)
   def __contains__(self, k: StreamIdx) -> bool: return k in self.streams
 
+  def contains(self, peer_id: str, topic: str, kind: Literal['pub', 'sub']) -> bool:
+    assert kind in ('pub', 'sub')
+    return StreamIdx(peer_id, topic, kind) in self.streams
+
   def add(self, peer_id: str, topic: str, kind: Literal['pub', 'sub'], stream: MessageStream | None = None) -> MessageStream:
     assert kind in ('pub', 'sub')
     k = StreamIdx(peer_id, topic, kind)
@@ -157,6 +161,22 @@ class TopicPartition:
   subscribers: dict[str, MessageStream] = field(default_factory=dict)
   """Mapping[PeerID, MeasageStream]: The Message Streams for all consuming peers"""
 
+  @property
+  def state(self) -> Literal['active', 'inactive', 'draining', 'teardown']:
+    """
+    
+    `active`: At least one Publishing Peer
+    `inactive`: No Publishing or Subscribing Peers
+    `draining`: No Publishing Peers, At least one subscribing Peer, Log is not empty
+    `teardown`: No Publishing Peers, At least one subscribing Peer, Log is empty
+    
+    """
+    if len(self.publishers) >= 1: return 'active'
+    elif len(self.publishers) <= 0 and len(self.subscribers) <= 0: return 'inactive'
+    elif len(self.publishers) <= 0 and len(self.subscribers) >= 1 and len(self.log) >= 1: return 'draining'
+    elif len(self.publishers) <= 0 and len(self.subscribers) >= 1 and len(self.log) <= 0: return 'teardown'
+    else: raise NotImplementedError(f'topic: {self.topic}, pubs: {len(self.publishers)}, subs: {len(self.subscribers)}, log: {len(self.log)}')
+    
   def add_publisher(self, peer_id: str, stream: MessageStream | None = None) -> MessageStream:
     assert peer_id not in self.publishers
     if stream is None: stream = MessageStream()
@@ -181,14 +201,17 @@ class TopicPartition:
     """Pulls the next available message from the producers"""
     # TODO: Refactor; how can we be more efficient? How do we ensure fair scheduling?
     while True:
+      # assert len(self.publishers) >= 1
       for peer_id, stream in self.publishers.items():
-        if stream.count > 0: return await stream.pop()
+        if len(stream) > 0:
+          logger.debug(f'{self.__class__.__name__} {self.topic}: Pulling the next available message from {peer_id}')
+          return await stream.pop()
+      # logger.debug(f'{self.__class__.__name__} {self.topic}: No Messages were available')
       await asyncio.sleep(0) # If no messages are available then yield to the event loop
 
   async def _listener_step(self):
 
     ### Get the first message available from all ingress members
-
     msg = await self.pull_msg()
 
     ### Add the message to the log
@@ -251,7 +274,10 @@ class TopicRegistry:
   """Map[Path, Record]"""
   streams: StreamRegistry = field(default_factory=StreamRegistry)
   _: KW_ONLY
+  events: EventDistributor
   _gens: dict[str, dict[Literal['router', 'listener'], AsyncGenerator]] = field(default_factory=dict)
+  """Map[Topic, Map[router | listener, CLoop]]"""
+  _tasks: set[asyncio.Task] = field(default_factory=set, init=False)
 
   def __getitem__(self, k: str) -> TopicPartition: return self.topics[k]
   def __iter__(self) -> Iterator[str]: return iter(self.topics)
@@ -266,43 +292,74 @@ class TopicRegistry:
       'listener': self.topics[topic].listener()
     }
   
+  async def _defer_remove_topic(self, topic: str):
+    # TODO: Can this be refactored to just wait until the last subscriber unsubscribes?
+    teardown = True
+    while True:
+      assert topic in self.topics
+      state = self.topics[topic].state
+      if state == 'draining': await asyncio.sleep(0) # Defer
+      elif state == 'teardown': # Automatically unsubscribe the peers
+        logger.debug(f'Topic {topic}: Tearing Down Subscribers')
+        if not teardown: continue # Don't teardown twice
+        async with asyncio.TaskGroup() as tg:
+          for peer_id in self.topics[topic].subscribers:
+            tg.create_task(self.unsubscribe(peer_id, topic))
+        teardown = False
+      elif state == 'inactive': # Finally remove the Topic
+        logger.debug(f'Topic {topic}: Finalizing Deferred Removal')
+        await self.events.notify(TopicPartitionEvent(group=topic, state='inactive'))
+        self._remove_topic(topic)
+        assert topic not in self.topics
+        break
+      elif state in ('setup', 'active'): raise NotImplementedError('Topic ReActivation!') # TODO: How do we want to handle topic reactivation
+      else: raise NotImplementedError(state)
+
   def _remove_topic(self, topic: str):
     assert topic in self.topics
     assert not self.topics[topic].publishers # Can only remove a topic w/ no active publishers
-    assert not self.topics[topic].subscribers # (Maybe?) Can only remove a topic w/ not active subscribers
+    assert not self.topics[topic].subscribers # Can only remove a topic w/ no active subscribers
     del self.topics[topic]
     del self._gens[topic] # Drop the Generators; TODO: Cleanup?
   
-  async def _wait_for_topic(self, topic: str):
-    # TODO: Refactor
-    while topic not in self.topics: await asyncio.sleep(0)
-
   async def publish(self, peer_id: str, topic: str):
-    if topic not in self.topics: self._add_topic(topic)
+    if topic not in self.topics:
+      self._add_topic(topic)
+      await self.events.notify(TopicPartitionEvent(group=topic, state='setup'))
     assert peer_id not in self.topics[topic].publishers
-    # TODO: Refactor
+    notify = not self.topics[topic].publishers
     stream = self.topics[topic].add_publisher(peer_id)
     self.streams.add(peer_id, topic, 'pub', stream=stream)
+    if notify: await self.events.notify(TopicPartitionEvent(group=topic, state='active'))
+    await self.events.notify(PeerTopicEvent(group=peer_id, state='publish'))
   
   async def unpublish(self, peer_id: str, topic: str):
     assert topic in self.topics
     assert peer_id in self.topics[topic].publishers
+    await self.events.notify(PeerTopicEvent(group=peer_id, state='unpublish'))
     self.topics[topic].remove_publisher(peer_id)
     self.streams.remove(peer_id, topic, 'pub')
-    if not self.topics[topic].publishers: # If no publishers remain
-      self._remove_topic(topic)
-      assert topic not in self.topics
+    if self.topics[topic].state != 'active':
+      await self.events.notify(TopicPartitionEvent(group=topic, state='teardown'))
+      self._tasks.add(asyncio.create_task(self._defer_remove_topic(topic)))
 
   async def subscribe(self, peer_id: str, topic: str):
-    if topic not in self.topics: await self._wait_for_topic(topic)
+    """Setup Peer Subscription to a Topic; waits for the topic to be created"""
+    async with self.events.wait(
+      TopicPartitionEvent, group=topic,
+      filter=lambda e: e.state == 'active',
+    ) as _: assert topic in self.topics
+
     assert peer_id not in self.topics[topic].subscribers
     # TODO: Refactor
     stream = self.topics[topic].add_subscriber(peer_id)
     self.streams.add(peer_id, topic, 'sub', stream=stream)
+    await self.events.notify(PeerTopicEvent(group=peer_id, state='subscribe'))
   
   async def unsubscribe(self, peer_id: str, topic: str):
     assert topic in self.topics
     assert peer_id in self.topics[topic].subscribers
+    await self.events.notify(PeerTopicEvent(group=peer_id, state='unsubscribe'))
     self.topics[topic].remove_subscriber(peer_id)
     self.streams.remove(peer_id, topic, 'sub')
 
@@ -415,6 +472,7 @@ class MessageProducer:
   ):
     self._inflight.add(asyncio.current_task())
     try:
+
       ### TODO: Optimize Message Creation Process
       msg = Message(
         id=hex(_get_time()), # TODO: Need some external construct to assign an ID to the Message; probably the broker?
@@ -425,16 +483,20 @@ class MessageProducer:
       )
       
       ### Queue the message to be sent
+      logger.debug(f'{self.__class__.__name__} {self.peer_id}: Pushing Message {msg.id} onto Queue')
       assert StreamIdx(self.peer_id, topic, 'pub') in self.stream
       try: await self.stream.lookup(self.peer_id, topic, 'pub').push(msg)
       except StreamOverload as e: raise NotImplementedError from e # TODO: Handle Overloads
 
       ### Wait for the Message to be sent
+      logger.debug(f'{self.__class__.__name__} {self.peer_id}: Waiting for Broker to take possesion of Message {msg.id}')
       await msg.sent.wait()
       assert msg.sent.when is not None
 
       ### Return the Message ID
+      logger.debug(f'{self.__class__.__name__} {self.peer_id}: Broker has taken possesion of Message {msg.id}')
       return msg.id
+
     finally: self._inflight.remove(asyncio.current_task())
 
   async def wait_till_empty(self): # TODO: Refactor
@@ -451,7 +513,9 @@ class MessageConsumer:
   stream: StreamRegistry
 
   async def recv(self, topic: str) -> Message:
-    assert StreamIdx(self.peer_id, topic, 'sub') in self.stream
+    # assert StreamIdx(self.peer_id, topic, 'sub') in self.stream
+
+    if not self.stream.contains(self.peer_id, topic, 'sub'): raise TopicError(topic)
 
     ### Pull a Message from the Broker
 
@@ -493,6 +557,205 @@ class TopicMember:
     self.subscriptions.remove(topic)
 
 @dataclass
+class ReservationRegistry:
+  """Make Reservations in a queue to preserve ordering.
+  
+  Reservations are made.
+  If the reservation is the first in line then it is made immediately ready.
+  When the reservation first in line is released, then the new head of the queue is made ready.
+  Releasing a reservation prematurely simply drops the reservation from the queue.
+  Queues must first be created before positions can be reserved.
+  
+  """
+
+  queues: dict[tuple, deque[asyncio.Event]] = field(default_factory=dict)
+
+  def contains(self, *k: Hashable) -> bool: return k in self.queues
+
+  def add(self, *k: Hashable):
+    """Add a Queue"""
+    assert k not in self.queues
+    self.queues[k] = deque()
+
+  def remove(self, *k: Hashable):
+    """Remove a Queue"""
+    assert k in self.queues
+    assert len(self.queues[k]) <= 0
+    del self.queues[k]
+  
+  def reserve(self, *k: Hashable) -> asyncio.Event:
+    """Make a reservation on the Queue"""
+    assert k in self.queues, [k, list(self.queues.keys())]
+    res = asyncio.Event()
+    if len(self.queues[k]) <= 0: res.set()
+    self.queues[k].append(res)
+    return res
+  
+  def release(self, r: asyncio.Event, *k: Hashable):
+    """Release the given reservation on the specified queue"""
+    assert k in self.queues
+    assert self.queues[k].count(r) == 1, self.queues[k].count(r)
+    if r is self.queues[k][0]:
+      res = self.queues[k].popleft()
+      assert res is r
+      if len(self.queues[k]) > 0:
+        self.queues[k][0].set()
+    else:
+      self.queues[k].remove(r)
+      assert len(self.queues[k]) >= 2
+  
+  @asynccontextmanager
+  async def enqueue(self, *k: Hashable) -> AsyncGenerator:
+    """Make a reservation & block until it's ready"""
+    r = self.reserve(*k)
+    try:
+      await r.wait()
+      yield
+    finally:
+      self.release(r, *k)
+
+@dataclass
+class InternalEvent:
+  kind: str
+  """The event kind"""
+  group: str
+  """The group Key"""
+  state: str
+  """The state encapsulated by the event"""
+
+  def __str__(self) -> str: return f'Event<{self.kind}>[{self.group}]: `{self.state}`'
+
+E = TypeVar('E', bound=InternalEvent)
+
+@dataclass
+class TopicPartitionEvent(InternalEvent):
+  kind: Literal['TopicPartition'] = field(default='TopicPartition', init=False)
+  group: str
+  """Topic"""
+  state: Literal['setup', 'active', 'teardown', 'inactive']
+
+@dataclass
+class PeerSessionEvent(InternalEvent):
+  kind: Literal['PeerSession'] = field(default='PeerSession', init=False)
+  group: str
+  """Peer ID"""
+  state: Literal['setup', 'active', 'teardown', 'inactive']
+
+@dataclass
+class PeerTopicEvent(InternalEvent):
+  kind: Literal['PeerTopicEvent'] = field(default='PeerTopicEvent', init=False)
+  group: str
+  """Peer ID"""
+  state: Literal['subscribe', 'unsubscribe', 'publish', 'unpublish']
+
+EVENT_REGISTRY: set[E] = set()
+### Add all child classes to the Event Registry
+for obj in globals().copy().values():
+  try:
+    if issubclass(obj, InternalEvent) and obj is not InternalEvent:
+      EVENT_REGISTRY.add(obj)
+  except: pass
+assert len(EVENT_REGISTRY) >= 1 and all(filter(lambda cls: issubclass(cls, InternalEvent), EVENT_REGISTRY)) and InternalEvent not in EVENT_REGISTRY, EVENT_REGISTRY
+
+def _event_cache_factory():
+  cache = {
+    f.default: {}
+    for cls in EVENT_REGISTRY
+    for f in fields(cls)
+    if f.name == 'kind'
+  }
+  assert len(cache) == len(EVENT_REGISTRY) and all(isinstance(x, str) for x in cache.keys()), cache
+  return cache
+
+@dataclass
+class EventDistributor:
+  """Manage & Distribute Events for the Message Broker"""
+
+  queues: dict[str, deque[E]] = field(default_factory=dict)
+  reserve: ReservationRegistry = field(default_factory=ReservationRegistry)
+  cache: dict[str, dict[str, E]] = field(default_factory=_event_cache_factory)
+
+  def __post_init__(self):
+    self.reserve.add('notify')
+
+  async def _get(self, id: str) -> E:
+    """Blocking Get a value from a Queue"""
+    while True:
+      assert id in self.queues
+      if len(self.queues[id]) >= 1:
+        e = self.queues[id].pop()
+        # logger.debug(f'{self.__class__.__name__}: {id} Receiving {e}')
+        return e
+      await asyncio.sleep(0)
+  
+  async def _put(self, id: str, e: E):
+    """Blocking Push a value into a Queue"""
+    while True:
+      assert id in self.queues
+      if self.queues[id].maxlen is None or len(self.queues[id]) < self.queues[id].maxlen:
+        # logger.debug(f'{self.__class__.__name__}: {id} Notifying of {e}')
+        return self.queues[id].appendleft(e)
+      await asyncio.sleep(0)
+
+  def _add_listener(self, id: str, q: deque[E] | None = None):
+    assert id not in self.queues
+    if q is None: q = deque([ # Prepopulate the Queue w/ the current state
+      e for v in self.cache.values() for e in v.values()
+    ])
+    self.queues[id] = q
+    self.reserve.add(id)
+  
+  def _remove_listener(self, id: str):
+    assert id in self.queues
+    del self.queues[id]
+    self.reserve.remove(id)
+  
+  async def notify(self, event: E):
+    assert event.kind in self.cache
+    async with self.reserve.enqueue('notify'):
+      # Record the latest state for the event
+      self.cache[event.kind][event.group] = event
+      # Notify Listeners
+      async with asyncio.TaskGroup() as tg:
+        for id in self.queues: tg.create_task(self._put(id, event))
+
+  async def listen(self, id: str) -> AsyncGenerator[E, None]:
+    """Listen for Events"""
+    while True:
+      assert self.reserve.contains(id)
+      async with self.reserve.enqueue(id):
+        assert id in self.queues
+        e = await self._get(id)
+        yield e
+  
+  @asynccontextmanager
+  async def listener(self, id: str | None = None) -> AsyncGenerator[AsyncIterator[E], None]:
+    """Allocate a Listener"""
+    if id is None: id = hex(_get_time())
+    add_listener = id not in self.queues
+    if add_listener: self._add_listener(id)
+    assert id in self.queues
+    assert self.reserve.contains(id)
+    try:
+      listen = self.listen(id)
+      yield listen
+    finally:
+      await listen.aclose()
+      if add_listener: self._remove_listener(id)
+  
+  @asynccontextmanager
+  async def wait(self, kind: type[E], filter: Callable[[E], bool], group: str | None = None) -> AsyncGenerator[E, None]:
+    """Wait for some Condition"""
+    # logger.debug(f'{self.__class__.__name__}: Waiting on {kind.__name__}<{group or 'Any'}>')
+    async with self.listener() as listener:
+      async for e in listener:
+        # logger.debug(f'{self.__class__.__name__}: Listener has recieved {e}')
+        assert issubclass(type(e), InternalEvent) and not type(e) is InternalEvent # TODO: why aren't typehints working?
+        if isinstance(e, kind) and filter(e):
+          yield e
+          return # We are done so return
+
+@dataclass
 class PeerSession:
   """Connection lifecycle of a peer to a broker. Manages session state & provides an interface to interact w/ the broker.
 
@@ -517,6 +780,9 @@ class PeerSession:
   """Protocol for Producing Messages"""
   rx: Consume
   """Protocol for Consuming Messages"""
+  _: KW_ONLY
+  reserve: ReservationRegistry = field(default_factory=ReservationRegistry)
+  leave: Callable[[str], Coroutine]
 
   async def disconnect(self, force: bool = False):
     """Disconnect the Client from the Distributed System.
@@ -556,13 +822,14 @@ class PeerSession:
       unpub = tg.create_task(_unpublish())
       unsub = tg.create_task(_unsubscribe())
     
-    ... # TODO ?
+    await self.leave(self.peer_id)
 
   async def publish(self, *topic: str):
     """Declare the Client will Publish to the provided topics"""
     async with asyncio.TaskGroup() as tg:
       for t in topic:
         if t not in self.pub.publishments:
+          self.reserve.add('pub', t)
           tg.create_task(self.pub.publish(t))
   
   async def unpublish(self, *topic: str):
@@ -570,6 +837,7 @@ class PeerSession:
     async with asyncio.TaskGroup() as tg:
       for t in topic:
         if t in self.pub.publishments:
+          self.reserve.remove('pub', t)
           tg.create_task(self.pub.unpublish(t))
 
   async def subscribe(self, *topic: str):
@@ -577,6 +845,7 @@ class PeerSession:
     async with asyncio.TaskGroup() as tg:
       for t in topic:
         if t not in self.sub.subscriptions:
+          self.reserve.add('sub', t)
           tg.create_task(self.sub.subscribe(t))
 
   async def unsubscribe(self, *topic: str):
@@ -584,56 +853,136 @@ class PeerSession:
     async with asyncio.TaskGroup() as tg:
       for t in topic:
         if t in self.sub.subscriptions:
+          self.reserve.remove('sub', t)
           tg.create_task(self.sub.unsubscribe(t))
 
   async def put(self, topic: str, dst: str, payload: ByteString):
-    """Enqueue a Topic for transmission; blocks until the message is pulled from the queue"""
+    """Enqueue a Message for transmission; blocks until the broker takes ownership of the message"""
     assert topic in self.pub.publishments
-    await self.tx.send(
-      src=AddrPath.unicast(self.peer_id),
-      dst=dst,
-      topic=topic,
-      payload=payload,
-    )
+    logger.debug(f'Peer {self.peer_id}: Reserving Publication Order')
+    async with self.reserve.enqueue('pub', topic):
+      logger.debug(f'Peer {self.peer_id}: time to send message')
+      await self.tx.send(
+        src=AddrPath.unicast(self.peer_id),
+        dst=dst,
+        topic=topic,
+        payload=payload,
+      )
+      logger.debug(f'Peer {self.peer_id}: message sent')
 
   async def get(self, topic: str) -> Message:
-    """Pull the next available message on the topic"""
+    """Pull the next available message on the topic; blocks until a message is available"""
     assert topic in self.sub.subscriptions
-    return await self.rx.recv(topic)
+    async with self.reserve.enqueue('sub', topic):
+      return await self.rx.recv(topic)
 
 @dataclass
-class MessageBroker:
+class PeerRegistry:
+  """Manages the state of PeerSessions"""
 
   peers: dict[str, PeerSession] = field(default_factory=dict)
   """All peers w/ an active connection to the Broker"""
-  topics: TopicRegistry = field(default_factory=TopicRegistry)
-  """The Registry of Topics managed by the Message Broker"""
+  _: KW_ONLY
+  events: EventDistributor
+  session_factory: Callable[[str], PeerSession]
 
-  async def connect(self,
-    peer_id: str,
-  ) -> PeerSession:
+  def __getitem__(self, k: str) -> PeerSession: return self.peers[k]
+  def __iter__(self) -> Iterator[str]: return iter(self.peers)
+  def __contains__(self, k: str) -> bool: return k in self.peers
+
+  async def join(self, peer_id: str):
+    """Add a Peer Session"""
     assert peer_id not in self.peers
 
-    # TODO: Refactor: Need to Move Stream Registry creation out of the Topic Registry dataclass factory function
+    ### Notify a Peer is joining
+    await self.events.notify(PeerSessionEvent(
+      group=peer_id, state='setup',
+    ))
 
-    topic_member = TopicMember(
-      peer_id=peer_id,
-      registry=self.topics
-    )
-    
-    session = PeerSession(
-      peer_id=peer_id,
-      pub=topic_member,
-      sub=topic_member,
-      tx=MessageProducer(
-        peer_id=peer_id,
-        stream=self.topics.streams,
-      ),
-      rx=MessageConsumer(
-        peer_id=peer_id,
-        stream=self.topics.streams,
-      ),
-    )
-    self.peers[peer_id] = session
-    return session
+    ### Setup the Peer
+    self.peers[peer_id] = self.session_factory(peer_id)
 
+    ### Notify the Peer is active
+    await self.events.notify(PeerSessionEvent(
+      group=peer_id, state='active',
+    ))
+  
+  async def leave(self, peer_id: str):
+    """Remove a Peer Session"""
+    assert peer_id in self.peers
+
+    ### Notify the Peer is leaving
+    await self.events.notify(PeerSessionEvent(
+      group=peer_id, state='teardown',
+    ))
+
+    ### Cleanup the Peer
+    del self.peers[peer_id]
+
+    ### Notify the Peer has left
+    await self.events.notify(PeerSessionEvent(
+      group=peer_id, state='inactive',
+    ))
+
+@dataclass
+class MessageBroker:
+  """A Broker of Messages in a Distributed System"""
+
+  events: EventDistributor
+  """Manage & Distribute Internal Broker Events"""
+  peers: PeerRegistry
+  """Manage Peers participating in the Distributed System"""
+  topics: TopicRegistry
+  """The Registry of Topics managed by the Message Broker"""
+
+  @classmethod
+  def factory(cls,
+    events: EventDistributor | None = None,
+    peers: PeerRegistry | None = None,
+    topics: TopicRegistry | None = None,
+  ) -> MessageBroker:
+
+    if events is None: events = EventDistributor()
+    if topics is None: topics = TopicRegistry(
+      events=events,
+    )
+    if peers is None:
+      # TODO: Refactor; this dependency injection is jank
+      peers = PeerRegistry(
+        events=events,
+        session_factory=lambda *args: None,
+      )
+      def peer_session_factory(
+        peer_id: str,
+      ) -> PeerSession:
+        topic_member = TopicMember(
+          peer_id=peer_id,
+          registry=topics,
+        )
+        return PeerSession(
+          peer_id=peer_id,
+          pub=topic_member,
+          sub=topic_member,
+          tx=MessageProducer(
+            peer_id=peer_id,
+            stream=topics.streams,
+          ),
+          rx=MessageConsumer(
+            peer_id=peer_id,
+            stream=topics.streams,
+          ),
+          leave=peers.leave
+        )
+      peers.session_factory = peer_session_factory
+
+    return cls(
+      events=events,
+      peers=peers,
+      topics=topics
+    )
+  
+  async def connect(self, peer_id: str) -> PeerSession:
+    assert peer_id not in self.peers
+    await self.peers.join(peer_id)
+    assert peer_id in self.peers
+    return self.peers[peer_id]
