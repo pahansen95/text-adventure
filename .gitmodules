@@ -1,0 +1,4 @@
+[submodule "vendor/github.com/pahansen95/dev-agent"]
+	path = vendor/github.com/pahansen95/dev-agent
+	url = git@github.com:pahansen95/dev-utils.git
+	branch = dev-agent
