@@ -379,10 +379,12 @@ class Compositor:
     ]
     filter_graph = ffmpeg.FilterGraph()
     for name, timeline in self.layers.items():
+      logger.debug(f'Processing Layer: {name}')
       filter_chain = ffmpeg.FilterChain()
 
       ### Add the Events
       for i, e in enumerate(timeline.events):
+        logger.debug(f'Processing Layer Event: {i}')
         ### Add as input
         inputs.append(
           ffmpeg.AudioSource(f'inputs/layer_{name}_event_{i}.mp3')
@@ -392,7 +394,9 @@ class Compositor:
         input_idx = len(inputs) - 1
         ### Delay each input
         filter_chain.add(
-          ffmpeg.Filter('adelay').label(
+          ffmpeg.Filter(
+            'adelay'
+          ).label(
             'in', f'{input_idx}:a'
           ).label(
             'out', f'layer_{name}_event_{i}'
@@ -407,7 +411,7 @@ class Compositor:
         ffmpeg.Filter(
           'amix'
         ).label(
-          'in', *( f'layer_{name}_event_{i}' for i in range(timeline.events) )
+          'in', *( f'layer_{name}_event_{i}' for i in range(len(timeline.events)) )
         ).label(
           'out', f'layer_{name}'
         ).set(
@@ -434,7 +438,7 @@ class Compositor:
         )
       )
     )
-    logger.debug(f'Filter Graph: {filter_graph.sprint()}')
+    logger.debug(f'Filter Graph...\n{filter_graph.sprint()}')
 
     ### Create a temporary working directory, cache inputs to disk
     with tempfile.TemporaryDirectory() as _workdir:
@@ -501,7 +505,11 @@ class Scene:
         )
     
     ### Finally Render the Scene
-    raise NotImplementedError
+    artifact = await self.compositor.composite()
+    assert artifact
+    # TODO: Cache it?
+
+    return artifact
 
 @dataclass
 class Manuscript:

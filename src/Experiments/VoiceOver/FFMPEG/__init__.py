@@ -102,12 +102,24 @@ class Filter:
   
   def label(self, k: Literal['in', 'out'], *name: str) -> Filter:
     """Add an input/output pad labels"""
-    self.pads[k].update(*name)
+    assert isinstance(name, tuple)
+    self.pads[k].update(name)
     return self
 
-  def sprint(self) -> str:
+  def sprint(self, idnt: int = 0) -> str:
     """Pretty Print to string"""
-    raise NotImplementedError
+    t = idnt * ' '
+    t2 = (idnt + 2) * ' '
+    return '\n'.join((
+      f'{t}{self.__class__.__name__}(',
+        '\n'.join(f'{t2}{x}' for x in (
+          f'Name: {self.name}',
+          f'Input Pads: {self.pads["in"]}',
+          f'Output Pads: {self.pads["out"]}',
+          f'Args: {[ ( f'{x[0]}={x[1]}' if isinstance(x, tuple) else x ) for x in self.args ]}',
+        )),
+      f'{t})',
+    ))
 
 @dataclass
 class FilterChain:
@@ -120,9 +132,15 @@ class FilterChain:
     self.seq.extend(f)
     return self
 
-  def sprint(self) -> str:
+  def sprint(self, idnt: int = 0) -> str:
     """Pretty Print to string"""
-    raise NotImplementedError
+    t = idnt * ' '
+    return '\n'.join((
+      f'{t}{self.__class__.__name__}(',
+      '\n'.join( f'{s.sprint(idnt+2)}' for s in self.seq ),
+      f'{t})',
+    ))
+
 
 @dataclass
 class FilterGraph:
@@ -135,9 +153,14 @@ class FilterGraph:
     self.seq.extend(f)
     return self
   
-  def sprint(self) -> str:
+  def sprint(self, idnt: int = 0) -> str:
     """Pretty Print to string"""
-    raise NotImplementedError
+    t = idnt * ' '
+    return '\n'.join((
+      f'{t}{self.__class__.__name__}(',
+      '\n'.join( f'{s.sprint(idnt+2)}' for s in self.seq ),
+      f'{t})',
+    ))
 
   def argv(self) -> list[str]:
     """return the FFMPEG CLI Args"""
