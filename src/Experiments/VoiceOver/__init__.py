@@ -8,7 +8,7 @@ from typing import TypedDict, Iterable, Protocol, Any, Iterator, Callable
 from collections.abc import Mapping, ByteString
 from dataclasses import dataclass, field, KW_ONLY
 
-import asyncio, logging, random, pathlib, json, hashlib, io, tempfile
+import asyncio, logging, random, pathlib, json, hashlib, io, tempfile, itertools, shlex
 from mutagen.mp3 import MP3
 
 from . import (
@@ -17,6 +17,8 @@ from . import (
 )
 
 logger = logging.getLogger(__name__)
+
+def _ms(s: float) -> float: return s * 1E3
 
 class Cfg(TypedDict):
   ElevenLabsAPIKey: str
@@ -170,8 +172,12 @@ async def run(
 
     ### Render the Scene
 
+    logger.info('Rendering Scnene')
     scene_audio = await scene.render()
-    (cfg['WorkCache'] / f'{scene.name}.mp3').write_bytes(
+    assert scene_audio
+    scene_file = cfg['WorkCache'] / f'{scene.name}.mp3'
+    logger.info(f'Writing Scene to {scene_file.as_posix()}')
+    scene_file.write_bytes(
       scene_audio
     )
 
@@ -296,21 +302,37 @@ class Timeline:
     event = TimelineEvent(artifact, start, end)
 
     ### Get the index, by start time, where this event takes place
-    idx = 0
+    idx = len(self.events)
     for i, e in enumerate(self.events):
       if e.after(event):
-        idx = i
+        idx = i # Record the Insertion Index
         break
     
-    if idx - 1 >= 0 and idx - 1 < len(self.events):
+    idx_in_bounds: Callable[[int], bool] = lambda i: i >= 0 and i < len(self.events)
+
+    # Check the Preceeding Event isn't concurrent
+    if idx_in_bounds(idx - 1):
       preceding_event = self.events[idx - 1]
       if event.concurrent(preceding_event): raise ValueError(f'Event {event} Conflicts w/ the Preceding Event {preceding_event}')
 
-    if idx >= 0 and idx < len(self.events):
+    # Check the Proceeding Event isn't concurrent
+    if idx_in_bounds(idx):
       proceeding_event = self.events[idx]
       if event.concurrent(proceeding_event): raise ValueError(f'Event {event} Conflicts w/ the Proceeding Event {proceeding_event}')
 
     self.events.insert(idx, event)
+
+    ### TODO: DEBUG
+    for idx in range(len(self.events)):
+      if idx == 0: continue
+      assert idx > 0
+      now = self.events[idx]
+      prev = self.events[idx - 1]
+      assert now is not prev
+      assert now.after(prev), f'{now=}, {prev=}'
+      assert prev.before(now), f'{now=}, {prev=}'
+      assert not now.concurrent(prev), f'{now=}, {prev=}'
+    ### TODO: DEBUG
 
 @dataclass
 class Compositor:
@@ -336,17 +358,20 @@ class Compositor:
   def append_voice_line(self, layer: str, voice_line: bytes):
     """Adds a voice line on a layer immediately after the compositor's newest (right most) event"""
     assert layer in self.layers, layer
-
-    logger.debug(f'{[l.end for l in self.layers.values()]}')
-    when = max(l.end for l in self.layers.values())
+    self.insert_voice_line(layer, voice_line, self.end)
+  
+  def insert_voice_line(self, layer: str, voice_line: bytes, when: float):
+    """Adds a voice line on a layer at the specified time"""
+    assert layer in self.layers, layer
 
     # Get the duration of the voice line
     metadata = MP3(io.BytesIO(voice_line)).info
     duration = metadata.length
     logger.debug(f'{(when, when + duration)}')
 
+    # Insert the Voice Line
     self.layers[layer].insert(voice_line, when, when + duration)
-  
+
   async def composite(self) -> bytes:
     """Render into a single MP3 File"""
 
@@ -375,7 +400,12 @@ class Compositor:
     ]
     write_tasks: dict[str, ByteString] = {}
     outputs: list[ffmpeg.AudioSink] = [
-      ffmpeg.AudioSink('outputs/artifact.mp3', codec=ffmpeg.AudioCodec('libmp3lame'), map='artifact')
+      ffmpeg.AudioSink(
+        'outputs/artifact.mp3',
+          codec=ffmpeg.AudioCodec('libmp3lame'),
+          # fmt='mp3',
+          # map='artifact'
+      ),
     ]
     filter_graph = ffmpeg.FilterGraph()
     for name, timeline in self.layers.items():
@@ -401,7 +431,7 @@ class Compositor:
           ).label(
             'out', f'layer_{name}_event_{i}'
           ).set(
-            f'{e.start}s',
+            f'{_ms(e.start)}',
             ('all', '1'),
           )
         )
@@ -423,22 +453,25 @@ class Compositor:
       ### Add the Chain
       filter_graph.add(filter_chain)
     
-    ### Mix all the Layers together
+    ### Mix all the Layers together & Normalize Volume
     filter_graph.add(
       ffmpeg.FilterChain().add(
         ffmpeg.Filter(
           'amix'
         ).label(
           'in', *( f'layer_{name}' for name in self.layers )
-        ).label(
-          'out', 'artifact'
         ).set(
           ( 'inputs', len(self.layers) ),
           ( 'duration', 'longest' )
         )
+      ).add(
+        ffmpeg.Filter(
+          'loudnorm'
+        )
       )
     )
     logger.debug(f'Filter Graph...\n{filter_graph.sprint()}')
+    logger.debug(f'Filter Graph LibAV Syntax...\n{filter_graph.libav_syntax()}')
 
     ### Create a temporary working directory, cache inputs to disk
     with tempfile.TemporaryDirectory() as _workdir:
@@ -446,21 +479,25 @@ class Compositor:
       ( workdir / 'inputs' ).mkdir(exist_ok=True)
       for file, data in write_tasks.items(): ( workdir / file ).write_bytes(data)
       ( workdir / 'outputs' ).mkdir(exist_ok=True)
-      argv = [
+      argv = list(itertools.chain(
         ### Computed Flags
-        *( x.argv() for x in inputs ),
-        *filter_graph.argv(),
-        *( x.argv() for x in outputs ),
+        itertools.chain.from_iterable( x.argv() for x in inputs ),
+        filter_graph.argv(),
+        itertools.chain.from_iterable( x.argv() for x in outputs ),
         ### Global Flags
-        '-loglevel', 'info',
-      ]
-      logger.debug(f'FFMPEG CMD...\nffmpeg {" ".join(argv)}')
+        (
+          '-loglevel', 'info',
+        )
+      ))
+      logger.debug('FFMPEG Argv...\n' + '\n'.join(f'`{x}`' for x in argv))
+      logger.debug(f'FFMPEG CMD...\nffmpeg {shlex.join(argv)}')
       cmd = await asyncio.create_subprocess_exec(
         'ffmpeg', *argv,
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         cwd=_workdir,
       )
       stdout, stderr = await cmd.communicate()
+      logger.debug(f'FFMPEG Output...\n' + stdout.decode() + '\n' + stderr.decode())
       assert cmd.returncode is not None
       if cmd.returncode != 0:
         logger.warning(f'FFMPEG failed on {cmd.returncode}\n' + stdout.decode() + '\n' + stderr.decode())
@@ -485,6 +522,8 @@ class Scene:
 
     ### Let's iteratively construct the scene
     for events in self.chronology:
+      _roles = [ e.role for e in events ]
+      assert all( _roles.count(e.role) == 1 for e in events ), _roles
       ### Render Voice Lines
       async with asyncio.TaskGroup() as tg:
         voice_line_tasks = {
@@ -498,12 +537,16 @@ class Scene:
       voice_lines = { e: v.result() for e, v in voice_line_tasks.items() }
       
       ### Composite the Voice Lines on the Scene's Compositor Axis
-      for e, v in voice_lines.items():
-        self.compositor.append_voice_line(
+      end = self.compositor.end
+      for e in events:
+        # Insert the voice lines at the current end on their respective layers
+        self.compositor.insert_voice_line(
           layer=e.role.name,
-          voice_line=v
+          voice_line=voice_lines.pop(e),
+          when=end,
         )
-    
+      assert not voice_lines
+
     ### Finally Render the Scene
     artifact = await self.compositor.composite()
     assert artifact

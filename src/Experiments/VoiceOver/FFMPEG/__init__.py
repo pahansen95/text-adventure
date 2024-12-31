@@ -3,7 +3,7 @@ from typing import Literal
 from collections.abc import ByteString
 from dataclasses import dataclass, field, KW_ONLY
 
-import asyncio, logging, pathlib, io, tempfile
+import asyncio, logging, pathlib, io, tempfile, itertools
 from mutagen.mp3 import MP3
 
 logger = logging.getLogger(__name__)
@@ -22,13 +22,21 @@ class Codec:
     self.args.extend(x)
     return self
 
-  def argv(self) -> list[str]:
-    """return the FFMPEG CLI Args"""
-    raise NotImplementedError
-
 @dataclass
 class AudioCodec(Codec):
   """Some Audio En/Decoder"""
+
+  def argv(self) -> list[str]:
+    """return the FFMPEG CLI Args"""
+    return [
+      '-c:a', f'{self.name}', *(
+        (
+          ( f'-{a[0]}', f'{a[1]}' )
+          if isinstance(a, tuple) else
+          ( f'-{a}', )
+        ) for a in self.args
+      )
+    ]
 
 @dataclass
 class MediaTarget:
@@ -50,10 +58,6 @@ class MediaTarget:
     self.args.extend(x)
     return self
   
-  def argv(self) -> list[str]:
-    """return the FFMPEG CLI Args"""
-    raise NotImplementedError
-
 @dataclass
 class MediaSource(MediaTarget):
   """A Media Input"""
@@ -65,6 +69,23 @@ class AudioSource(MediaSource):
   codec: AudioCodec
   """[Optional] The Audio Codec of the Audio Source"""
 
+  def argv(self):
+    argv = []
+    if self.fmt: argv.append(( '-f', f'{self.fmt}' ))
+    if self.duration: argv.append(( '-t', f'{self.duration}' ))
+    if self.codec: argv.append( self.codec.argv() )
+    _url = self.url
+    if self.args:
+      _url += '=' + ':'.join(
+        (
+          f'{a[0]}={a[1]}'
+          if isinstance(a, tuple) else
+          f'{a}'
+        ) for a in self.args
+      )
+    argv.append(( '-i', _url ))
+    return list(itertools.chain.from_iterable(argv))
+
 @dataclass
 class MediaSink(MediaTarget):
   """A Media Output"""
@@ -74,16 +95,31 @@ class MediaSink(MediaTarget):
   map: str | None = field(default=None)
   """[Optional] The Stream to map to this sink; either an input identifier or a link label: see -map"""
 
-  def argv(self) -> list[str]:
-    """return the FFMPEG CLI Args"""
-    raise NotImplementedError
-
 @dataclass
 class AudioSink(MediaSink):
   """An Audio Output"""
 
-  codec: AudioCodec
+  codec: AudioCodec | None = None
   """[Optional] The Audio Codec of the Audio Sink"""
+
+  def argv(self):
+    argv = []
+    if self.fmt: argv.append(( '-f', f'{self.fmt}' ))
+    if self.duration: argv.append(( '-t', f'{self.duration}' ))
+    if self.codec: argv.append( self.codec.argv() )
+    if self.target: argv.append(( '-t', self.target ))
+    if self.map: argv.append(( '-map', self.map ))
+    _url = self.url
+    if self.args:
+      _url += '=' + ':'.join(
+        (
+          f'{a[0]}={a[1]}'
+          if isinstance(a, tuple) else
+          f'{a}'
+        ) for a in self.args
+      )
+    argv.append(( _url, ))
+    return list(itertools.chain.from_iterable(argv))
 
 @dataclass
 class Filter:
@@ -120,6 +156,28 @@ class Filter:
         )),
       f'{t})',
     ))
+  
+  def libav_syntax(self) -> str:
+    """Converts the FilterGraph into the Syntax Expected by libavfilter"""
+    l = []
+    if self.pads['in']:
+      for lbl in self.pads['in']:
+        l.append(f'[{lbl}]')
+    l.append(self.name)
+    if self.args:
+      l[-1] += "='" + ':'.join(
+        (
+          f'{a[0]}={a[1]}'
+          if isinstance(a, tuple)
+          else
+          a
+        ) for a in self.args
+      ) + "'"
+    if self.pads['out']:
+      for lbl in self.pads['out']:
+        l.append(f'[{lbl}]')
+    assert l
+    return ' '.join(l)
 
 @dataclass
 class FilterChain:
@@ -140,7 +198,10 @@ class FilterChain:
       '\n'.join( f'{s.sprint(idnt+2)}' for s in self.seq ),
       f'{t})',
     ))
-
+  
+  def libav_syntax(self) -> str:
+    """Converts the FilterGraph into the Syntax Expected by libavfilter"""
+    return ',\n'.join(s.libav_syntax() for s in self.seq)
 
 @dataclass
 class FilterGraph:
@@ -161,8 +222,11 @@ class FilterGraph:
       '\n'.join( f'{s.sprint(idnt+2)}' for s in self.seq ),
       f'{t})',
     ))
+  
+  def libav_syntax(self) -> str:
+    """Converts the FilterGraph into the Syntax Expected by libavfilter"""
+    return ';\n'.join(s.libav_syntax() for s in self.seq)
 
   def argv(self) -> list[str]:
     """return the FFMPEG CLI Args"""
-    raise NotImplementedError
-
+    return [ '-filter_complex', self.libav_syntax() ]
