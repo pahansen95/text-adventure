@@ -1,0 +1,145 @@
+from __future__ import annotations
+from typing import Literal
+from collections.abc import ByteString
+from dataclasses import dataclass, field, KW_ONLY
+
+import asyncio, logging, pathlib, io, tempfile
+from mutagen.mp3 import MP3
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class Codec:
+  """Some Media [En/De]Coder"""
+
+  name: str
+  """Name of the Codec"""
+  args: list[str | tuple[str, str]] = field(default_factory=list)
+  """List of configurable arguments to pass to the codec"""
+
+  def set(self, *x: str | tuple[str, str]):
+    """Set arguments on the Codec"""
+    self.args.extend(x)
+    return self
+
+  def argv(self) -> list[str]:
+    """return the FFMPEG CLI Args"""
+    raise NotImplementedError
+
+@dataclass
+class AudioCodec(Codec):
+  """Some Audio En/Decoder"""
+
+@dataclass
+class MediaTarget:
+  """Some Media Source or Sink"""
+
+  url: str
+  """The Media's URL"""
+  args: list[str | tuple[str, str]] = field(default_factory=list)
+  """List of configurable arguments to pass to the target media"""
+  fmt: str | None = field(default=None)
+  """[Optional] The Format of the Media"""
+  codec: Codec | None = field(default=None)
+  """[Optional] The Codec of the Media"""
+  duration: float | None = field(default=None)
+  """[Optional] The extents of the Media"""
+
+  def set(self, *x: str | tuple[str, str]):
+    """Set arguments on the Media"""
+    self.args.extend(x)
+    return self
+  
+  def argv(self) -> list[str]:
+    """return the FFMPEG CLI Args"""
+    raise NotImplementedError
+
+@dataclass
+class MediaSource(MediaTarget):
+  """A Media Input"""
+
+@dataclass
+class AudioSource(MediaSource):
+  """An Audio Input"""
+
+  codec: AudioCodec
+  """[Optional] The Audio Codec of the Audio Source"""
+
+@dataclass
+class MediaSink(MediaTarget):
+  """A Media Output"""
+
+  target: str | None = field(default=None)
+  """[Optional] The Target File Type of the Output File"""
+  map: str | None = field(default=None)
+  """[Optional] The Stream to map to this sink; either an input identifier or a link label: see -map"""
+
+  def argv(self) -> list[str]:
+    """return the FFMPEG CLI Args"""
+    raise NotImplementedError
+
+@dataclass
+class AudioSink(MediaSink):
+  """An Audio Output"""
+
+  codec: AudioCodec
+  """[Optional] The Audio Codec of the Audio Sink"""
+
+@dataclass
+class Filter:
+  
+  name: str
+  """The name of the filter"""
+  pads: dict[Literal['in', 'out'], set[str]] = field(default_factory=lambda: { 'in': set(), 'out': set() })
+  """The set of input/output pad labels"""
+  args: list[str | tuple[str, str]] = field(default_factory=list)
+  """The set of arguements for the Filter"""
+  
+  def set(self, *x: str | tuple[str, str]) -> Filter:
+    """Set arguments on the Filter"""
+    self.args.extend(x)
+    return self
+  
+  def label(self, k: Literal['in', 'out'], *name: str) -> Filter:
+    """Add an input/output pad labels"""
+    self.pads[k].update(*name)
+    return self
+
+  def sprint(self) -> str:
+    """Pretty Print to string"""
+    raise NotImplementedError
+
+@dataclass
+class FilterChain:
+  
+  seq: list[Filter] = field(default_factory=list)
+  """The Sequence of Filters to Chain"""
+  
+  def add(self, *f: Filter) -> FilterChain:
+    """Add the sequence of Filters"""
+    self.seq.extend(f)
+    return self
+
+  def sprint(self) -> str:
+    """Pretty Print to string"""
+    raise NotImplementedError
+
+@dataclass
+class FilterGraph:
+  
+  seq: list[FilterChain] = field(default_factory=list)
+  """The Sequence of FilterChains"""
+
+  def add(self, *f: FilterChain) -> FilterGraph:
+    """Add a Filter Chain to the Graph"""
+    self.seq.extend(f)
+    return self
+  
+  def sprint(self) -> str:
+    """Pretty Print to string"""
+    raise NotImplementedError
+
+  def argv(self) -> list[str]:
+    """return the FFMPEG CLI Args"""
+    raise NotImplementedError
+
