@@ -6,6 +6,8 @@ import asyncio, aiohttp, logging
 
 logger = logging.getLogger(__name__)
 
+CHUNK_SIZE = int(16 * 1024)
+
 class ElevenLabsError(RuntimeError): ...
 
 def load_api_key_from_env(env: Mapping[str, str]) -> str: return env['ELEVENLABS_API_KEY']
@@ -53,8 +55,11 @@ async def tts(
   text: str,
   voice_id: str,
   session: aiohttp.ClientSession,
-) -> bytes:
+  stream: bool = False,
+  chunk_size: int = CHUNK_SIZE,
+) -> AsyncGenerator[bytes, None]:
   """Text to Speech"""
+  if stream: raise NotImplementedError('Realtime TTS')
   async with session.post(
     url=f'/v1/text-to-speech/{voice_id}',
     headers={
@@ -69,5 +74,5 @@ async def tts(
       err = await resp.json()
       logger.warning(err)
       raise RuntimeError(err)
-
-    return await resp.read()
+    async for c in resp.content.iter_chunked(chunk_size): yield c
+    

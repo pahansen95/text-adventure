@@ -4,8 +4,8 @@ A simple experiment in generating voice overs for a story
 
 """
 from __future__ import annotations
-from typing import TypedDict, Iterable, Protocol, Any, Iterator, Callable
-from collections.abc import Mapping, ByteString
+from typing import TypedDict, Protocol, Any, BinaryIO
+from collections.abc import Mapping, ByteString, AsyncGenerator, Iterator, Iterable, Callable
 from dataclasses import dataclass, field, KW_ONLY
 
 import asyncio, logging, random, pathlib, json, hashlib, io, tempfile, itertools, shlex
@@ -18,6 +18,8 @@ from . import (
 
 logger = logging.getLogger(__name__)
 
+CHUNK_SIZE = int(16 * 1024)
+
 def _ms(s: float) -> float: return s * 1E3
 
 class Cfg(TypedDict):
@@ -29,45 +31,6 @@ def load_cfg_from_env(env: Mapping[str, str]) -> Cfg:
     'ElevenLabsAPIKey': elvn.load_api_key_from_env(env),
     'WorkCache': pathlib.Path(env.get('WORK_CACHE', env.get('TMPDIR', './')).rstrip('/')) / 'elevenlabs',
   }
-
-# async def run(
-#   cfg: Cfg,
-#   quit_event: asyncio.Event,
-#   seed: int | bytes | None = None
-# ):
-#   random.seed(seed)
-#   voice_line = (
-#     """
-#     Come on down to the barbecue y'all; you won't want to miss it!
-#     """
-#   )
-#   voice_line_fingerprint = hashlib.md5(voice_line.strip().encode()).hexdigest()[:16]
-#   voices_cache = cfg['WorkCache'] / 'voices.json'
-#   logger.debug('Establishing an API Session w/ ElevenLabs')
-#   async with elvn.api_session(
-#     api_key=cfg['ElevenLabsAPIKey'],
-#   ) as api_session:
-#     if voices_cache.exists():
-#       logger.debug('Loading the ElevenLabs Voices Cache')
-#       voices = json.loads(voices_cache.read_bytes())
-#     else:
-#       logger.debug('Caching the ElevenLabs Voices')
-#       voices = await elvn.voices(api_session)
-#       voices_cache.write_bytes(json.dumps(voices).encode())
-
-#     voice_name = random.choice(tuple(voices))
-#     logger.debug(f'Dubbing some text w/ {voice_name}')
-#     voice = await elvn.tts(
-#       voice_line,
-#       voices[voice_name],
-#       api_session
-#     )
-#     assert isinstance(voice, bytes)
-#   voice_file = cfg['WorkCache'] / f'tts-{voice_name}-{voice_line_fingerprint}.mp3'
-#   logger.info(f'DEV: Writing Voice Data to {voice_file}')
-#   voice_file.write_bytes(voice)
-#   # await quit_event.wait()
-#   return
 
 async def run(
   cfg: Cfg,
@@ -97,19 +60,31 @@ async def run(
       (cfg['WorkCache'] / 'rt-cache').mkdir(exist_ok=True)
       cache: pathlib.Path = field(default=cfg['WorkCache'] / 'rt-cache')
       def key(self, *k: str) -> str: return hashlib.md5('|'.join(k).encode()).hexdigest()
-      def load(self, *k: str) -> Any | None:
-        cache_file = self.cache / self.key(*k)
-        if cache_file.exists(): return cache_file.read_bytes()
-        return None
-      def save(self, v: bytes, *k: str): (self.cache / self.key(*k)).write_bytes(v)
+      def exists(self, *k: str) -> bool: return (self.cache / self.key(*k)).exists()
+      def slurp(self, *k: str) -> bytes: return (self.cache / self.key(*k)).read_bytes()
+      def dump(self, v: bytes, *k: str): (self.cache / self.key(*k)).write_bytes(v)
+      async def load(self, *k: str, chunk_size: int = CHUNK_SIZE) -> AsyncGenerator[BinaryIO, None]:
+        with (self.cache / self.key(*k)).open('rb') as f:
+          while (c := f.read(chunk_size)): yield c
+      async def save(self, *k: str, src: AsyncGenerator[ByteString, None]):
+        with (self.cache / self.key(*k)).open('wb') as f:
+          async for c in src: f.write(c)
 
       ### Tool Protocol
-      async def dub(self, text: str, actor: str) -> bytes:
-        result = self.load(text, actor)
-        if result is None:
-          result = await elvn.tts(text, voices[actor], api_session)
-          self.save(result, text, actor)
-        return result
+      async def dub(self, text: str, actor: str, sink: BinaryIO | None = None) -> bytes | None:
+        
+        ### Cache Results on a Cache Miss
+        if not self.exists(text, actor): self.save(text, actor, (
+          await elvn.tts(text, voices[actor], api_session, chunk_size=CHUNK_SIZE)
+        ))
+        assert self.exists(text, actor)
+
+        ### Load the Results from Cache
+        if sink is None: return self.slurp(text, actor)
+        else:
+          async for c in self.load(text, actor):
+            sink.write(c)
+
     TOOLS = RuntimeTools()
     
     ### Build the Scene
@@ -146,48 +121,41 @@ async def run(
 
     intro_factory: Callable[[str], str] = lambda k: f'Hello! My name is {castings.actor_by_role(k).name} and I play the role of {castings[k].name}.'
 
-    scene = Scene(
-      name='Example',
-      castings=castings,
-      chronology=[
-        set( SceneEvent(when=when, **e) for e in events ) for when, events in enumerate((
-          (
-            { 'role': castings['Narrator'], 'voice_line': 'Scene Start.' },
-          ),
-          (
-            { 'role': castings['Narrator'], 'voice_line': intro_factory('Narrator') },
-          ),
-          (
-            { 'role': castings['Protagonist'], 'voice_line': intro_factory('Protagonist') },
-            { 'role': castings['Antagonist'], 'voice_line': intro_factory('Antagonist') },
-          ),
-          (
-            { 'role': castings['Narrator'], 'voice_line': 'Scene End.' },
-          )
-        ))
-      ],
-      compositor=compositor_factory(castings.roles),
-      tools=TOOLS,
-    )
+    manuscript = Manuscript().add_act().add_scene(
+      'Example', 1, Scene(
+        name='Example',
+        castings=castings,
+        chronology=[
+          set( SceneEvent(when=when, **e) for e in events ) for when, events in enumerate((
+            (
+              { 'role': castings['Narrator'], 'voice_line': 'Scene Start.' },
+            ),
+            (
+              { 'role': castings['Narrator'], 'voice_line': intro_factory('Narrator') },
+            ),
+            (
+              { 'role': castings['Protagonist'], 'voice_line': intro_factory('Protagonist') },
+              { 'role': castings['Antagonist'], 'voice_line': intro_factory('Antagonist') },
+            ),
+            (
+              { 'role': castings['Narrator'], 'voice_line': 'Scene End.' },
+            )
+          ))
+        ],
+        compositor=compositor_factory(castings.roles),
+        tools=TOOLS,
+    ))
 
-    ### Render the Scene
-
-    logger.info('Rendering Scnene')
-    scene_audio = await scene.render()
-    assert scene_audio
-    scene_file = cfg['WorkCache'] / f'{scene.name}.mp3'
-    logger.info(f'Writing Scene to {scene_file.as_posix()}')
-    scene_file.write_bytes(
-      scene_audio
-    )
+    ### Render the Manuscript
+    
+    manuscript_workdir = cfg['WorkCache'] / 'manuscript'
+    manuscript_workdir.mkdir(exist_ok=True)
+    logger.info(f'Rendering Manuscript under {manuscript_workdir.as_posix()}')
+    await manuscript.render(manuscript_workdir)
 
 class Tools(Protocol):
 
-  async def dub(self, text: str, actor: str) -> bytes: ...
-
-@dataclass
-class ShortStory:
-  """The Original Short Story"""
+  async def dub(self, text: str, actor: str, sink: BinaryIO | None = None) -> bytes | None: ...
 
 @dataclass
 class Actor:
@@ -256,11 +224,11 @@ class SceneEvent:
 @dataclass
 class TimelineEvent:
 
-  artifact: Any
+  artifact: pathlib.Path
   start: float
   end: float
 
-  def __repr__(self) -> str: return f'{self.__class__.__name__}(artifact=bytes(size={len(self.artifact)}), start={self.start}, end={self.end})'
+  def __repr__(self) -> str: return f'{self.__class__.__name__}(artifact={self.artifact.as_posix()}, start={self.start}, end={self.end})'
 
   def __post_init__(self):
     assert isinstance(self.start, float)
@@ -296,7 +264,7 @@ class Timeline:
   @property
   def duration(self) -> float: self.end - self.start
   
-  def insert(self, artifact: Any, start: float, end: float):
+  def insert(self, artifact: pathlib.Path, start: float, end: float):
     """Insert the event into the timeline"""
 
     event = TimelineEvent(artifact, start, end)
@@ -355,24 +323,26 @@ class Compositor:
     if timeline is None: timeline = Timeline()
     self.layers[name] = timeline
 
-  def append_voice_line(self, layer: str, voice_line: bytes):
+  def append_voice_line(self, layer: str, voice_line: pathlib.Path):
     """Adds a voice line on a layer immediately after the compositor's newest (right most) event"""
     assert layer in self.layers, layer
     self.insert_voice_line(layer, voice_line, self.end)
   
-  def insert_voice_line(self, layer: str, voice_line: bytes, when: float):
+  def insert_voice_line(self, layer: str, voice_line: pathlib.Path, when: float):
     """Adds a voice line on a layer at the specified time"""
     assert layer in self.layers, layer
 
     # Get the duration of the voice line
-    metadata = MP3(io.BytesIO(voice_line)).info
-    duration = metadata.length
+    assert voice_line.stat().st_size > 0
+    with voice_line.open('rb') as f:
+      metadata = MP3(f).info
+      duration = metadata.length
     logger.debug(f'{(when, when + duration)}')
 
     # Insert the Voice Line
     self.layers[layer].insert(voice_line, when, when + duration)
 
-  async def composite(self) -> bytes:
+  async def composite(self, output: pathlib.Path):
     """Render into a single MP3 File"""
 
     """"NOTE On FFMPEG Filter Maps
@@ -398,10 +368,11 @@ class Compositor:
         ( 'duration', self.end ), # TODO: Should this be abosulte (end) or relative (duration)?
       ),
     ]
-    write_tasks: dict[str, ByteString] = {}
+    assert output.parent.exists()
+    assert output.suffixes[-1] == '.mp3'
     outputs: list[ffmpeg.AudioSink] = [
       ffmpeg.AudioSink(
-        'outputs/artifact.mp3',
+        output.as_posix(),
           codec=ffmpeg.AudioCodec('libmp3lame'),
           # fmt='mp3',
           # map='artifact'
@@ -416,11 +387,12 @@ class Compositor:
       for i, e in enumerate(timeline.events):
         logger.debug(f'Processing Layer Event: {i}')
         ### Add as input
+        assert e.artifact.exists()
+        assert e.artifact.suffixes[-1] == '.mp3'
         inputs.append(
-          ffmpeg.AudioSource(f'inputs/layer_{name}_event_{i}.mp3')
+          ffmpeg.AudioSource(e.artifact.as_posix())
         )
         assert e.artifact is not None
-        write_tasks[f'inputs/layer_{name}_event_{i}.mp3'] = e.artifact
         input_idx = len(inputs) - 1
         ### Delay each input
         filter_chain.add(
@@ -474,35 +446,28 @@ class Compositor:
     logger.debug(f'Filter Graph LibAV Syntax...\n{filter_graph.libav_syntax()}')
 
     ### Create a temporary working directory, cache inputs to disk
-    with tempfile.TemporaryDirectory() as _workdir:
-      workdir = pathlib.Path(_workdir)
-      ( workdir / 'inputs' ).mkdir(exist_ok=True)
-      for file, data in write_tasks.items(): ( workdir / file ).write_bytes(data)
-      ( workdir / 'outputs' ).mkdir(exist_ok=True)
-      argv = list(itertools.chain(
-        ### Computed Flags
-        itertools.chain.from_iterable( x.argv() for x in inputs ),
-        filter_graph.argv(),
-        itertools.chain.from_iterable( x.argv() for x in outputs ),
-        ### Global Flags
-        (
-          '-loglevel', 'info',
-        )
-      ))
-      logger.debug('FFMPEG Argv...\n' + '\n'.join(f'`{x}`' for x in argv))
-      logger.debug(f'FFMPEG CMD...\nffmpeg {shlex.join(argv)}')
-      cmd = await asyncio.create_subprocess_exec(
-        'ffmpeg', *argv,
-        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        cwd=_workdir,
+    argv = list(itertools.chain(
+      ### Computed Flags
+      itertools.chain.from_iterable( x.argv() for x in inputs ),
+      filter_graph.argv(),
+      itertools.chain.from_iterable( x.argv() for x in outputs ),
+      ### Global Flags
+      (
+        '-loglevel', 'info',
       )
-      stdout, stderr = await cmd.communicate()
-      logger.debug(f'FFMPEG Output...\n' + stdout.decode() + '\n' + stderr.decode())
-      assert cmd.returncode is not None
-      if cmd.returncode != 0:
-        logger.warning(f'FFMPEG failed on {cmd.returncode}\n' + stdout.decode() + '\n' + stderr.decode())
-        raise RuntimeError(f'FFMPEG failed on {cmd.returncode}')
-      return ( workdir / 'outputs' / 'artifact.mp3' ).read_bytes()
+    ))
+    logger.debug('FFMPEG Argv...\n' + '\n'.join(f'`{x}`' for x in argv))
+    logger.debug(f'FFMPEG CMD...\nffmpeg {shlex.join(argv)}')
+    cmd = await asyncio.create_subprocess_exec(
+      'ffmpeg', *argv,
+      stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await cmd.communicate()
+    logger.debug(f'FFMPEG Output...\n' + stdout.decode() + '\n' + stderr.decode())
+    assert cmd.returncode is not None
+    if cmd.returncode != 0:
+      logger.warning(f'FFMPEG failed on {cmd.returncode}\n' + stdout.decode() + '\n' + stderr.decode())
+      raise RuntimeError(f'FFMPEG failed on {cmd.returncode}')
 
 @dataclass
 class Scene:
@@ -517,47 +482,113 @@ class Scene:
 
   tools: Tools
 
-  async def render(self) -> bytes:
-    """Render the Scene"""
+  async def render(self, workdir: str | pathlib.Path) -> pathlib.Path:
+    """Render the Scene; returns the path to the output artifact"""
+    if isinstance(workdir, str): workdir = pathlib.Path(workdir)
+    assert workdir.exists()
+    assert workdir.resolve().is_dir()
+
+    inputs_dir = workdir / 'inputs'
+    inputs_dir.mkdir(exist_ok=True)
+    outputs_dir = workdir / 'outputs'
+    outputs_dir.mkdir(exist_ok=True)
 
     ### Let's iteratively construct the scene
     for events in self.chronology:
+      ### TODO: DEBUGGING
       _roles = [ e.role for e in events ]
       assert all( _roles.count(e.role) == 1 for e in events ), _roles
+      ###
+
       ### Render Voice Lines
+      async def _dub(text: str, actor: str, file: pathlib.Path):
+        with file.open('wb') as sink:
+          res = await self.tools.dub(text, actor, sink)
+          assert res is None
+        assert file.stat().st_size > 0
+
+      voice_lines: dict[SceneEvent, pathlib.Path] = {}
       async with asyncio.TaskGroup() as tg:
-        voice_line_tasks = {
-          e: tg.create_task(self.tools.dub(
+        for e in filter(
+          lambda e: e.voice_line,
+          events
+        ):
+          voice_line_fingerprint = hashlib.md5(f'{e.role}_{e.when}_{e.voice_line}'.encode()).hexdigest()[0:16]
+          voice_lines[e] = inputs_dir / f'{voice_line_fingerprint}.mp3'
+          tg.create_task(_dub(
             e.voice_line,
             self.castings.actor_by_role(e.role).name,
+            voice_lines[e],
           ))
-          for e in events
-          if e.voice_line
-        }
-      voice_lines = { e: v.result() for e, v in voice_line_tasks.items() }
       
       ### Composite the Voice Lines on the Scene's Compositor Axis
       end = self.compositor.end
       for e in events:
         # Insert the voice lines at the current end on their respective layers
+        assert isinstance(voice_lines[e], pathlib.Path)
         self.compositor.insert_voice_line(
           layer=e.role.name,
-          voice_line=voice_lines.pop(e),
+          voice_line=voice_lines[e],
           when=end,
         )
-      assert not voice_lines
 
     ### Finally Render the Scene
-    artifact = await self.compositor.composite()
-    assert artifact
-    # TODO: Cache it?
-
-    return artifact
+    artifact_file = outputs_dir / 'artifact.mp3'
+    artifact_file.unlink(missing_ok=True) # Cleanup old renders
+    await self.compositor.composite(artifact_file)
+    return artifact_file
 
 @dataclass
 class Manuscript:
-  """A Manuscript of a short story"""
+  """A Manuscript of a short story; Acts are indexed 1"""
 
-  async def render(self) -> bytes:
+  scenes: dict[str, Scene] = field(default_factory=dict)
+  """All scenes keyed by name"""
+  acts: list[list[str]] = field(default_factory=lambda: [])
+  """The Acts & their scenes"""
+
+  def add_act(self):
+    self.acts.append([])
+    return self
+  def add_scene(self, name: str, act: int, scene: Scene):
+    assert name not in self.scenes
+    self.scenes[name] = scene
+    act_idx = act - 1
+    assert act_idx < len(self.acts)
+    self.acts[act_idx].append(name)
+    return self
+
+  async def render(self, workdir: str | pathlib.Path):
     """Render the Manuscript in it's entirety"""
-    raise NotImplementedError
+    if isinstance(workdir, str): workdir = pathlib.Path(workdir)
+    assert workdir.exists() and workdir.resolve().is_dir()
+
+    scenes_dir = workdir / 'scenes'
+    scenes_dir.mkdir(exist_ok=True)
+    scene_tasks: dict[str, asyncio.Task] = {}
+    async with asyncio.TaskGroup() as tg:
+      for name, scene in self.scenes.items():
+        scene_workdir = scenes_dir / name
+        scene_workdir.mkdir(exist_ok=True)
+        scene_tasks[name] = tg.create_task(
+          scene.render(
+            workdir=scene_workdir
+          )
+        )
+    
+    acts_tree = workdir / 'acts'
+    acts_tree.mkdir(exist_ok=True)
+    for act_num, act in enumerate(self.acts, start=1):
+      act_dir = acts_tree / f'Act {act_num:02d}'
+      act_dir.mkdir(exist_ok=True)
+      for scene_num, scene_name in enumerate(act, start=1):
+        scene_artifact = scene_tasks[scene_name].result()
+        assert isinstance(scene_artifact, pathlib.Path)
+        assert scene_artifact.exists()
+        ( act_dir / f'Act {act_num} - Scene {scene_num:02d} - {scene_name}{''.join(scene_artifact.suffixes)}' ).symlink_to(
+          scene_artifact
+        )
+
+@dataclass
+class ShortStory:
+  """The Original Short Story"""
