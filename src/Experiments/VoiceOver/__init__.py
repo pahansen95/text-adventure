@@ -8,7 +8,7 @@ from typing import TypedDict, Protocol, Any, BinaryIO
 from collections.abc import Mapping, ByteString, AsyncGenerator, Iterator, Iterable, Callable
 from dataclasses import dataclass, field, KW_ONLY
 
-import asyncio, logging, random, pathlib, json, hashlib, io, tempfile, itertools, shlex
+import asyncio, logging, random, pathlib, json, hashlib, io, tempfile, itertools, shlex, os
 from mutagen.mp3 import MP3
 
 from . import (
@@ -31,6 +31,18 @@ def load_cfg_from_env(env: Mapping[str, str]) -> Cfg:
     'ElevenLabsAPIKey': elvn.load_api_key_from_env(env),
     'WorkCache': pathlib.Path(env.get('WORK_CACHE', env.get('TMPDIR', './')).rstrip('/')) / 'elevenlabs',
   }
+
+def _relative_to_dir(p: pathlib.Path, d: pathlib.Path) -> pathlib.Path:
+  """Get the path relative to directory"""
+  c = pathlib.Path(os.path.commonpath([p.as_posix(), d.as_posix()]))
+  return pathlib.Path('./' + '/'.join(itertools.repeat(
+    '..', len(d.parts) - len(c.parts)
+  ))) / p.relative_to(c)
+
+# _relative_to_dir(
+#   pathlib.Path('/home/dev/project/github.com/pahansen95/text-adventure/worktree-trunk/src/Experiments/VoiceOver/Productions/Example/.data/manuscript/scenes/Example/inputs/02b9eba7db036753.mp3'),
+#   pathlib.Path('/home/dev/project/github.com/pahansen95/text-adventure/worktree-trunk/src/Experiments/VoiceOver/Productions/Example/.data/manuscript/acts/Act 01')
+# )
   
 class Tools(Protocol):
 
@@ -465,7 +477,10 @@ class Manuscript:
         assert isinstance(scene_artifact, pathlib.Path)
         assert scene_artifact.exists()
         ( act_dir / f'Act {act_num} - Scene {scene_num:02d} - {scene_name}{''.join(scene_artifact.suffixes)}' ).symlink_to(
-          scene_artifact
+          _relative_to_dir(
+            scene_artifact,
+            act_dir
+          )
         )
 
 @dataclass
