@@ -479,9 +479,10 @@ from . import (
 )
 
 __all__ = [
+  'CHUNK_SIZE',
   'Cfg', 'load_cfg_from_env',
   'Tools',
-  'Actor', 'Role', 'Castings'
+  'Actor', 'Role', 'Castings',
   'VoiceLine', 'SceneEvent', 'TimelineEvent', 'Timeline',
   'Compositor', 'Scene', 'Manuscript', 'ShortStory',
   'elvn',
