@@ -4,14 +4,17 @@ A simple experiment in generating voice overs for a story
 
 """
 from __future__ import annotations
-from typing import TypedDict, Iterable, Protocol, Any, Iterator, Literal
+from typing import TypedDict, Iterable, Protocol, Any, Iterator, Callable
 from collections.abc import Mapping, ByteString
 from dataclasses import dataclass, field, KW_ONLY
 
-import asyncio, logging, random, pathlib, json, hashlib, aiohttp, io, tempfile
+import asyncio, logging, random, pathlib, json, hashlib, io, tempfile
 from mutagen.mp3 import MP3
 
-from . import ElevenLabs as elvn, FFMPEG as ffmpeg
+from . import (
+  ElevenLabs as elvn,
+  FFMPEG as ffmpeg
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,17 +142,22 @@ async def run(
         compositor.add_layer(role.name)
       return compositor
 
+    intro_factory: Callable[[str], str] = lambda k: f'Hello! My name is {castings.actor_by_role(k).name} and I play the role of {castings[k].name}.'
+
     scene = Scene(
       name='Example',
       castings=castings,
       chronology=[
         set( SceneEvent(when=when, **e) for e in events ) for when, events in enumerate((
           (
-            { 'role': castings['Narrator'], 'voice_line': f'I am {castings.actor_by_role('Narrator').name}, the {castings['Narrator'].name}.' },
+            { 'role': castings['Narrator'], 'voice_line': 'Scene Start.' },
           ),
           (
-            { 'role': castings['Protagonist'], 'voice_line': f'I am {castings.actor_by_role('Protagonist').name}, the {castings['Protagonist'].name}.' },
-            { 'role': castings['Antagonist'], 'voice_line': f'I am {castings.actor_by_role('Antagonist').name}, the {castings['Antagonist'].name}.' },
+            { 'role': castings['Narrator'], 'voice_line': intro_factory('Narrator') },
+          ),
+          (
+            { 'role': castings['Protagonist'], 'voice_line': intro_factory('Protagonist') },
+            { 'role': castings['Antagonist'], 'voice_line': intro_factory('Antagonist') },
           ),
           (
             { 'role': castings['Narrator'], 'voice_line': 'Scene End.' },
