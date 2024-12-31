@@ -3,3 +3,5 @@
 .user.env
 __pycache__
 *.OLD
+src/Experiments/VoiceOver/Productions/*/.data
+!src/Experiments/VoiceOver/Productions/Example/.data
