@@ -33,4 +33,4 @@ __all__ = [
   'PRODUCTION_REGISTRY'
 ]
 
-from . import Example
+from . import Example, NurseryRhymes

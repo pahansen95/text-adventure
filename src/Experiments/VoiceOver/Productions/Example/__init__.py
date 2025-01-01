@@ -65,8 +65,8 @@ class ExampleProduction:
         async def dub(self, text: str, actor: str, sink: BinaryIO | None = None) -> bytes | None:
           
           ### Cache Results on a Cache Miss
-          if not self.exists(text, actor): self.save(text, actor, (
-            await elvn.tts(text, voices[actor], api_session, chunk_size=CHUNK_SIZE)
+          if not self.exists(text, actor): await self.save(text, actor, src=(
+            elvn.tts(text, voices[actor], api_session, chunk_size=CHUNK_SIZE)
           ))
           assert self.exists(text, actor)
 

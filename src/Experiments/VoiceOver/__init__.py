@@ -5,7 +5,7 @@ A simple experiment in generating voice overs for a story
 """
 from __future__ import annotations
 from typing import TypedDict, Protocol, Any, BinaryIO
-from collections.abc import Mapping, ByteString, AsyncGenerator, Iterator, Iterable, Callable
+from collections.abc import Mapping, ByteString, AsyncGenerator, Iterator, Iterable, Callable, MutableSequence
 from dataclasses import dataclass, field, KW_ONLY
 
 import asyncio, logging, random, pathlib, json, hashlib, io, tempfile, itertools, shlex, os
@@ -154,6 +154,8 @@ class Timeline:
     else: return 0.0
   @property
   def duration(self) -> float: self.end - self.start
+
+  def __len__(self) -> int: return len(self.events)
   
   def insert(self, artifact: pathlib.Path, start: float, end: float):
     """Insert the event into the timeline"""
@@ -271,6 +273,12 @@ class Compositor:
     ]
     filter_graph = ffmpeg.FilterGraph()
     for name, timeline in self.layers.items():
+      ### Short Circuit
+      if len(timeline) <= 0:
+        logger.debug(f'Skipping Empty Layer: {name}')
+        continue
+      
+      ### Process Layer
       logger.debug(f'Processing Layer: {name}')
       filter_chain = ffmpeg.FilterChain()
 
@@ -316,6 +324,7 @@ class Compositor:
       ### Add the Chain
       filter_graph.add(filter_chain)
     
+    if len(filter_graph) <= 0: raise RuntimeError('Nothing to composite')
     ### Mix all the Layers together & Normalize Volume
     filter_graph.add(
       ffmpeg.FilterChain().add(
@@ -366,12 +375,16 @@ class Scene:
 
   name: str
   castings: Castings
-  chronology: Iterable[set[SceneEvent]]
+  chronology: MutableSequence[set[SceneEvent]]
   compositor: Compositor
 
   _: KW_ONLY
 
   tools: Tools
+
+  def add(self, *event: SceneEvent):
+    self.chronology.append(set(event))
+    return self
 
   async def render(self, workdir: str | pathlib.Path) -> pathlib.Path:
     """Render the Scene; returns the path to the output artifact"""
@@ -394,7 +407,7 @@ class Scene:
       ### Render Voice Lines
       async def _dub(text: str, actor: str, file: pathlib.Path):
         with file.open('wb') as sink:
-          res = await self.tools.dub(text, actor, sink)
+          res = await self.tools.dub(text, actor, sink=sink)
           assert res is None
         assert file.stat().st_size > 0
 
@@ -435,7 +448,7 @@ class Manuscript:
 
   scenes: dict[str, Scene] = field(default_factory=dict)
   """All scenes keyed by name"""
-  acts: list[list[str]] = field(default_factory=lambda: [])
+  acts: list[list[str]] = field(default_factory=list)
   """The Acts & their scenes"""
 
   def add_act(self):
@@ -476,6 +489,8 @@ class Manuscript:
         scene_artifact = scene_tasks[scene_name].result()
         assert isinstance(scene_artifact, pathlib.Path)
         assert scene_artifact.exists()
+        symlink = act_dir / f'Act {act_num} - Scene {scene_num:02d} - {scene_name}{''.join(scene_artifact.suffixes)}'
+        if symlink.exists(): symlink.unlink()
         ( act_dir / f'Act {act_num} - Scene {scene_num:02d} - {scene_name}{''.join(scene_artifact.suffixes)}' ).symlink_to(
           _relative_to_dir(
             scene_artifact,

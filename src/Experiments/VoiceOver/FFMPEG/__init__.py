@@ -209,6 +209,8 @@ class FilterGraph:
   seq: list[FilterChain] = field(default_factory=list)
   """The Sequence of FilterChains"""
 
+  def __len__(self) -> int: return len(self.seq)
+
   def add(self, *f: FilterChain) -> FilterGraph:
     """Add a Filter Chain to the Graph"""
     self.seq.extend(f)
