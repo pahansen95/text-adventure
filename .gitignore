@@ -1,7 +1,101 @@
-.cache
-.venv
-.user.env
-__pycache__
-*.OLD
-src/Experiments/VoiceOver/Productions/*/.data
-!src/Experiments/VoiceOver/Productions/Example/.data
+# ## How to maintain this .gitignore
+# 
+# 1. Explicitly declare what (patterns) we want to track; otherwise ignore everything else.
+# 2. Breakup Filter Rules by Section; Each section must start with INCLUDE or EXCLUDE followed by a description of what/how you want to filter (separated by a colon)
+# 3. Write the appropriate Filter; it's better to be prescriptive than vague.
+# 4. Generally, Ignore everything & only track what you need.
+# 
+# ## How to Debug
+# 
+# Run the following & inspect the output
+# 
+# ```
+# find . -path ./.git -prune -o -type f -print | sort | git check-ignore -v --stdin
+# ```
+# 
+# ## How `.gitignore` Works
+# 
+# GitIgnore processes patterns sequentially from top to bottom.
+# Later patterns override earlier ones. The '!' prefix negates a pattern, re-including previously excluded files.
+# Patterns are relative to the .gitignore file location.
+
+# EXCLUDE: Everything Everywhere by default
+*
+
+# INCLUDE: Directory Structure Preservation
+!**/.gitkeep
+
+# INCLUDE: Document Folder & MkDocs supported files
+!docs/
+!docs/**/
+!docs/**/*.md
+!docs/**/*.rst
+!docs/**/*.txt
+!docs/**/*.yml
+!docs/**/*.yaml
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.svg
+!docs/**/*.html
+!docs/**/*.css
+!docs/**/*.js
+!docs/**/*.ts
+
+# INCLUDE: Helpers Folder & Contained Python Source Files, Scripts & Documents
+!helpers/
+!helpers/**/
+!helpers/**/*.md
+!helpers/**/*.py
+!helpers/**/*.sh
+!helpers/tool
+
+# INCLUDE: Meta Folder & contained markdown documents
+!meta/
+!meta/**/
+!meta/**/*.md
+!meta/**/*.txt
+!meta/**/*.yml
+!meta/**/*.yaml
+
+# INCLUDE: Models Folder & all Specifications & Documents
+!models/
+!models/**/
+!models/**/*.md
+!models/**/*.spec
+
+
+# INCLUDE: Source Folder & contained Python Source Files & any Documentation
+!src/
+!src/**/
+!src/**/*.md
+!src/**/*.py
+!src/**/*.pyi
+!src/**/py.typed
+
+# INCLUDE: Test Folder & contained Python Source Files
+!tests/
+!tests/**/
+!tests/**/*.py
+
+# INCLUDE: Vendor Folder & External Dependencies
+!vendor/
+!vendor/**
+
+# INCLUDE: Project Root Files; NOTE: This is highly prescriptive; we don't want to clutter our Project Root
+# Project Information
+!README.md
+!LICENSE
+!CHANGELOG.md
+!AGENT.md
+!CONTRIBUTOR.md
+# Python & Documentation Related Files
+!.python-version
+!pyproject.toml
+!uv.lock
+!mkdocs.yml
+# NOTE: Version Control & Development Configuration Files
+!.gitignore
+!.gitmodules
+!.gitattributes
+!.pre-commit-config.yaml
+!.envrc
