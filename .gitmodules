@@ -2,3 +2,6 @@
 	path = vendor/github.com/pahansen95/dev-agent
 	url = git@github.com:pahansen95/dev-utils.git
 	branch = dev-agent
+[submodule "vendor/github.com/pahansen95/observability"]
+	path = vendor/github.com/pahansen95/observability
+	url = git@github.com:pahansen95/observability.git
